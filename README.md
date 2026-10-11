@@ -141,7 +141,7 @@ docker buildx build --platform linux/amd64,linux/arm64 -t lenart12/sloflixfs:X.Y
 Layout:
 
 - `main.go`: flags (each also read from its `SLOFLIX_*` environment variable), mounting and shutdown.
-- `internal/sloflix`: the upstream side. The sloflix API and listing cache (`api.go`), per-title metadata and stream links (`media.go`), the background crawler (`crawl.go`), rate limits and the DoodStream window (`limits.go`), the CDN, size probes and probe heads (`cdn.go`), DoodStream embeds (`dood.go`), Jellyfin scan triggers (`jellyfin.go`), and setup (`sloflix.go`).
+- `internal/sloflix`: the upstream side. The sloflix API, login, listing cache and subtitles (`api.go`), per-title metadata and stream links (`media.go`), the background crawler (`crawl.go`), rate limits and the DoodStream window (`limits.go`), the CDN, size probes and probe heads (`cdn.go`), DoodStream embeds (`dood.go`), Jellyfin scan triggers (`jellyfin.go`), and setup (`sloflix.go`).
 - `internal/fusefs`: the filesystem. The tree and listings (`fs.go`), the streaming file handle (`stream.go`), and NFO files (`nfo.go`).
 
 ## License
