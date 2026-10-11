@@ -148,11 +148,9 @@ func (s *stream) Release(ctx context.Context) syscall.Errno {
 	defer s.mu.Unlock()
 	s.close()
 	if s.head != nil {
-		// Jellyfin probes a file once; later opens stream it.
 		s.head.Close()
-		os.Remove(sloflix.HeadFile(s.id))
 	}
-	os.Remove(sloflix.WantFile(s.id)) // probed: no head needed (saveHeads)
+	sloflix.Probed(s.id)
 	if s.conns > 0 || s.cached > 0 {
 		log.Printf("close %d: %d connections, %.1f MB in %v, %.1f MB from probe cache", s.id, s.conns, float64(s.read)/1e6, time.Since(s.opened).Round(100*time.Millisecond), float64(s.cached)/1e6)
 	}

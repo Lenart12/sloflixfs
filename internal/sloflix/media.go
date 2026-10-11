@@ -121,7 +121,7 @@ func resolve(id int, hi bool) (string, Meta, error) {
 		m.Size, m.Gone = prev.Size, prev.Gone
 	} else if stream != "" {
 		start := time.Now()
-		size, err := probeSize(stream, 0)
+		size, err := probeSize(stream)
 		if err == nil {
 			u, _ := url.Parse(stream)
 			log.Printf("cdn: probe %d %s %v", id, u.Host, time.Since(start).Round(time.Millisecond))
@@ -133,7 +133,7 @@ func resolve(id int, hi bool) (string, Meta, error) {
 		} else if size < minVideoSize {
 			stream, missing = "", fmt.Errorf("file is only %d bytes, likely a broken upload", size)
 			size = 0 // no source: rechecked after refreshTTL, in case it's re-uploaded
-			os.Remove(HeadFile(id))
+			os.Remove(headFile(id))
 		}
 		m.Size = size
 	}
@@ -159,7 +159,7 @@ func resolve(id int, hi bool) (string, Meta, error) {
 		log.Printf("media %d changed: size %d -> %d, sub %q -> %q", id, prev.Size, m.Size, prev.Sub, m.Sub)
 		m.Changed = time.Now()
 		if prev.Size > 0 && prev.Size != m.Size {
-			os.Remove(HeadFile(id)) // it's from the old file
+			os.Remove(headFile(id)) // it's from the old file
 		}
 	}
 	if noSource != nil {
@@ -174,7 +174,7 @@ func resolve(id int, hi bool) (string, Meta, error) {
 		log.Printf("media %d: %v", id, err) // the link still plays
 	}
 	if !hi && prev.Size == 0 && probeCache > 0 { // a new title: Jellyfin will probe it (see saveHeads)
-		writeFile(WantFile(id), nil)
+		writeFile(wantFile(id), nil)
 	}
 	return stream, m, nil
 }
@@ -214,7 +214,7 @@ func SetSize(id int, size int64) {
 	if err := writeMeta(id, m); err != nil {
 		log.Printf("media %d: %v", id, err)
 	}
-	os.Remove(HeadFile(id)) // it's from the old file
+	os.Remove(headFile(id)) // it's from the old file
 }
 
 // StreamURL returns the stream URL in meta and its size, or fresh ones if force is set or it is older than urlTTL.

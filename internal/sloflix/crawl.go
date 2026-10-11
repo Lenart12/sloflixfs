@@ -72,6 +72,8 @@ func crawler(limitMovies, limitShows int) {
 	for {
 		go saveHeads()
 		queue := crawlQueue(limitMovies, limitShows)
+		saveFailed()      // the previous round's failures
+		go jellyfinScan() // at most hourly, and only after titles were newly listed
 		// Rebuild at most every 10 minutes, so newly listed titles don't wait behind a long recheck queue.
 		next := time.Now().Add(10 * time.Minute)
 		ids := make(chan int)
@@ -95,8 +97,8 @@ func crawler(limitMovies, limitShows int) {
 	}
 }
 
-// crawlQueue walks the catalog (the only place its listings are refreshed; readdir serves them cached) and returns the titles
-// due for a check, in order. It also removes probe caches Jellyfin never read.
+// crawlQueue walks the catalog (the only place its listings are refreshed; readdir serves them cached) and
+// returns the titles due for a check, in order.
 func crawlQueue(limitMovies, limitShows int) []int {
 	type task struct {
 		id, bucket int
@@ -163,17 +165,9 @@ func crawlQueue(limitMovies, limitShows int) []int {
 			fresh++
 		}
 	}
-	heads, _ := os.ReadDir(filepath.Join(cacheDir, "heads"))
-	for _, e := range heads {
-		if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > headTTL {
-			os.Remove(filepath.Join(cacheDir, "heads", e.Name()))
-		}
-	}
 	if len(ids) > 0 {
 		log.Printf("crawl: %d new, %d to recheck; %d of %d probe cache slots used", fresh, len(ids)-fresh, headCount(), probeCache)
 	}
-	saveFailed()      // the previous round's failures
-	go jellyfinScan() // at most hourly, and only after titles were newly listed
 	return ids
 }
 

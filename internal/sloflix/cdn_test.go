@@ -36,14 +36,14 @@ func TestProbeSize(t *testing.T) {
 	srv.Start()
 	defer srv.Close()
 	for range 2 {
-		if n, err := probeSize(srv.URL+"/ok", 0); err != nil || n != 12345 {
+		if n, err := probeSize(srv.URL + "/ok"); err != nil || n != 12345 {
 			t.Fatalf("ok: %d %v", n, err)
 		}
 	}
 	if conns.Load() != 1 {
 		t.Fatalf("probe connections not reused: %d", conns.Load())
 	}
-	if _, err := probeSize(srv.URL+"/gone", 0); !errors.Is(err, errFileGone) {
+	if _, err := probeSize(srv.URL + "/gone"); !errors.Is(err, errFileGone) {
 		t.Fatalf("gone: %v", err)
 	}
 
@@ -51,15 +51,15 @@ func TestProbeSize(t *testing.T) {
 	dead, _ := net.Listen("tcp", "127.0.0.1:0")
 	dead.Close()
 	for i := range 2 {
-		if _, err := probeSize("http://"+dead.Addr().String()+"/f", 0); err == nil || strings.Contains(err.Error(), "skipped") {
+		if _, err := probeSize("http://" + dead.Addr().String() + "/f"); err == nil || strings.Contains(err.Error(), "skipped") {
 			t.Fatalf("probe %d of a dead server should try to connect: %v", i+1, err)
 		}
 	}
-	if _, err := probeSize("http://"+dead.Addr().String()+"/f", 0); err == nil || !strings.Contains(err.Error(), "skipped") {
+	if _, err := probeSize("http://" + dead.Addr().String() + "/f"); err == nil || !strings.Contains(err.Error(), "skipped") {
 		t.Fatalf("third probe of a dead server should be skipped: %v", err)
 	}
 	hosts = map[string]hostCheck{}
-	if _, err := probeSize("http://"+dead.Addr().String()+"/f?token=secret", 0); err == nil || strings.Contains(err.Error(), "secret") {
+	if _, err := probeSize("http://" + dead.Addr().String() + "/f?token=secret"); err == nil || strings.Contains(err.Error(), "secret") {
 		t.Fatalf("a failed request's error must not carry the link's token: %v", err)
 	}
 }
@@ -92,17 +92,20 @@ func TestSaveHead(t *testing.T) {
 	cacheDir = t.TempDir()
 	os.MkdirAll(filepath.Join(cacheDir, "heads"), 0755)
 
-	if n, err := probeSize(srv.URL+"/start", 1); err != nil || n != int64(len(files["/start"])) {
-		t.Fatalf("start: %d %v", n, err)
+	if err := fetchHead(1, srv.URL+"/start", int64(len(files["/start"]))); err != nil {
+		t.Fatalf("start: %v", err)
 	}
-	head, _ := os.ReadFile(HeadFile(1))
+	head, _ := os.ReadFile(headFile(1))
 	if want := files["/start"][:len(start)+headSlack]; !bytes.Equal(head, want) {
 		t.Fatalf("head is %d bytes, want the first %d", len(head), len(want))
 	}
-	if n, err := probeSize(srv.URL+"/end", 2); err != nil || n != int64(len(files["/end"])) {
-		t.Fatalf("end: %d %v", n, err)
+	if err := fetchHead(2, srv.URL+"/end", int64(len(files["/end"]))); err == nil {
+		t.Fatal("end: saved")
 	}
-	if _, err := os.Stat(HeadFile(2)); !os.IsNotExist(err) {
+	if err := fetchHead(2, srv.URL+"/start", 1<<30); err == nil {
+		t.Fatal("a file of another size than the crawler saw: saved")
+	}
+	if _, err := os.Stat(headFile(2)); !os.IsNotExist(err) {
 		t.Fatalf("index at the end saved a head: %v", err)
 	}
 	// Rejected from the box header, not after copying until EOF or the timeout.
@@ -123,12 +126,12 @@ func TestSaveHead(t *testing.T) {
 	probeCache = 10
 	for id, age := range map[int]time.Duration{4: urlTTL - headLead/2, 5: time.Hour, 6: urlTTL + time.Minute} {
 		writeMeta(id, Meta{Size: int64(len(files["/start"])), URL: srv.URL + "/start", URLAt: time.Now().Add(-age)})
-		writeFile(WantFile(id), nil)
+		writeFile(wantFile(id), nil)
 	}
 	saveHeads()
 	for id, want := range map[int][2]bool{4: {true, false}, 5: {false, true}, 6: {false, false}} {
-		_, headErr := os.Stat(HeadFile(id))
-		_, wantErr := os.Stat(WantFile(id))
+		_, headErr := os.Stat(headFile(id))
+		_, wantErr := os.Stat(wantFile(id))
 		if got := [2]bool{headErr == nil, wantErr == nil}; got != want {
 			t.Fatalf("title %d: head, marker %v, want %v", id, got, want)
 		}

@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"slices"
 	"strings"
 	"syscall"
@@ -130,12 +129,9 @@ func (v *video) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, 
 	}
 	// A new title's start, saved by the crawler: Jellyfin's probe is served from it without resolving a link.
 	if m, ok := sloflix.Info(v.id); ok {
-		if f, err := os.Open(sloflix.HeadFile(v.id)); err == nil {
-			if st, err := f.Stat(); err == nil {
-				s.size, s.head, s.headLen = m.Size, f, st.Size()
-				return s, 0, 0
-			}
-			f.Close()
+		if f, n, ok := sloflix.OpenHead(v.id); ok {
+			s.size, s.head, s.headLen = m.Size, f, n
+			return s, 0, 0
 		}
 	}
 	_, size, err := sloflix.StreamURL(v.id, false)

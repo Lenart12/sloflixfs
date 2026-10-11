@@ -77,13 +77,27 @@ func verifyCert(cs tls.ConnectionState, roots *x509.CertPool) error {
 
 // GetRange requests stream URL u from byte off on, unless its video server is remembered as down.
 func GetRange(u string, off int64) (*http.Response, error) {
-	req, err := newRequest(context.Background(), "GET", u, nil)
+	return getRange(context.Background(), u, fmt.Sprintf("bytes=%d-", off))
+}
+
+func getRange(ctx context.Context, u, rng string) (*http.Response, error) {
+	req, err := newRequest(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Referer", referer)
-	req.Header.Set("Range", fmt.Sprintf("bytes=%d-", off))
+	req.Header.Set("Range", rng)
 	return cdnDo(req)
+}
+
+// rangeSize is the file size in a range response's Content-Range, or 0 if it isn't one.
+func rangeSize(resp *http.Response) int64 {
+	if resp.StatusCode != http.StatusPartialContent {
+		return 0
+	}
+	_, total, _ := strings.Cut(resp.Header.Get("Content-Range"), "/")
+	size, _ := strconv.ParseInt(total, 10, 64)
+	return size
 }
 
 // cdnDo sends req to a video server, failing fast while its host is remembered as down.
@@ -161,39 +175,37 @@ const minVideoSize = 5 << 20
 
 // probeSize returns a stream's size from a 1-byte range request. Not HEAD: some sources are presigned
 // S3/R2 URLs, signed for GET only. A DoodStream CDN whose file is gone answers 200 with "error_nofile".
-// With headID set, it instead requests the whole file and saves its start for that title (see saveHead).
-func probeSize(stream string, headID int) (int64, error) {
-	timeout, rng := 15*time.Second, "bytes=0-0"
-	if headID != 0 {
-		timeout, rng = 2*time.Minute, "bytes=0-" // ~16 MB for a long film, at ~650 kB/s per connection
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func probeSize(stream string) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	req, err := newRequest(ctx, "GET", stream, nil)
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Referer", referer)
-	req.Header.Set("Range", rng)
-	resp, err := cdnDo(req)
+	resp, err := getRange(ctx, stream, "bytes=0-0")
 	if err != nil {
 		return 0, err
 	}
 	defer resp.Body.Close()
-	_, total, _ := strings.Cut(resp.Header.Get("Content-Range"), "/")
-	size, _ := strconv.ParseInt(total, 10, 64)
-	if resp.StatusCode == http.StatusPartialContent && size > 0 {
-		if headID == 0 {
-			io.Copy(io.Discard, io.LimitReader(resp.Body, 1)) // read the byte so the connection is reused for the stream that follows
-		} else if err := saveHead(headID, resp.Body); err != nil {
-			log.Printf("media %d: no probe cache: %v", headID, err) // Jellyfin's probe streams it instead
-		}
+	if size := rangeSize(resp); size > 0 {
+		io.Copy(io.Discard, io.LimitReader(resp.Body, 1)) // read the byte so the connection is reused for the stream that follows
 		return size, nil
 	}
 	if b, _ := io.ReadAll(io.LimitReader(resp.Body, 64)); bytes.Contains(b, []byte("error_nofile")) {
 		return 0, errFileGone
 	}
 	return 0, fmt.Errorf("size probe %s, Content-Range %q", resp.Status, resp.Header.Get("Content-Range"))
+}
+
+// fetchHead saves the start of title id's file from stream (see saveHead), if the file is still size bytes.
+func fetchHead(id int, stream string, size int64) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute) // up to ~70 MB, usually ~16
+	defer cancel()
+	resp, err := getRange(ctx, stream, "bytes=0-")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if got := rangeSize(resp); got != size { // replaced or gone since the crawl: the probe streams it instead
+		return fmt.Errorf("file is %d bytes, was %d (%s)", got, size, resp.Status)
+	}
+	return saveHead(id, resp.Body)
 }
 
 const (
@@ -205,22 +217,49 @@ const (
 	headLead  = time.Hour // how long before urlTTL saveHeads saves a head; above the crawler's rebuild interval
 )
 
-// HeadFile is where a title's probe head is saved (see saveHead).
-func HeadFile(id int) string { return filepath.Join(cacheDir, "heads", fmt.Sprint(id)) }
+// headFile is where a title's probe head is saved (see saveHead).
+func headFile(id int) string { return filepath.Join(cacheDir, "heads", fmt.Sprint(id)) }
 
-// WantFile marks a new title Jellyfin hasn't probed yet (see saveHeads). Closing the file removes it.
-func WantFile(id int) string { return filepath.Join(cacheDir, "want", fmt.Sprint(id)) }
+// wantFile marks a new title Jellyfin hasn't probed yet (see saveHeads).
+func wantFile(id int) string { return filepath.Join(cacheDir, "want", fmt.Sprint(id)) }
+
+// OpenHead opens title id's saved start (see saveHead), if it has one, and returns its length.
+func OpenHead(id int) (*os.File, int64, bool) {
+	f, err := os.Open(headFile(id))
+	if err != nil {
+		return nil, 0, false
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, 0, false
+	}
+	return f, st.Size(), true
+}
+
+// Probed records that title id was opened: Jellyfin probes a file once, later opens stream it, so neither
+// its saved start nor a later one (saveHeads) is needed.
+func Probed(id int) {
+	os.Remove(headFile(id))
+	os.Remove(wantFile(id))
+}
 
 var headBusy sync.Mutex // one saveHeads at a time
 
 // saveHeads saves the start of new titles Jellyfin hasn't probed while their stream link is about to
 // expire. Until then a probe uses the link; after, it would need a new lookup (for an embed-only title a
-// DoodStream one, which a scan probing many titles runs out of).
+// DoodStream one, which a scan probing many titles runs out of). It also removes heads never probed.
 func saveHeads() {
 	if !headBusy.TryLock() {
 		return
 	}
 	defer headBusy.Unlock()
+	heads, _ := os.ReadDir(filepath.Join(cacheDir, "heads"))
+	for _, e := range heads {
+		if fi, err := e.Info(); err == nil && time.Since(fi.ModTime()) > headTTL {
+			os.Remove(filepath.Join(cacheDir, "heads", e.Name()))
+		}
+	}
 	want, _ := os.ReadDir(filepath.Join(cacheDir, "want"))
 	for _, e := range want {
 		id, _ := strconv.Atoi(e.Name())
@@ -230,11 +269,11 @@ func saveHeads() {
 			continue
 		}
 		if m.URL != "" && age < urlTTL && headCount() < probeCache {
-			if _, err := probeSize(m.URL, id); err != nil {
-				log.Printf("media %d: no probe cache: %v", id, err)
+			if err := fetchHead(id, m.URL, m.Size); err != nil {
+				log.Printf("media %d: no probe cache: %v", id, err) // Jellyfin's probe streams it instead
 			}
 		}
-		os.Remove(WantFile(id))
+		os.Remove(wantFile(id))
 	}
 }
 
@@ -245,7 +284,7 @@ func headCount() int {
 	return len(heads)
 }
 
-// saveHead saves an MP4's start, through its index (the moov box) plus headSlack, to HeadFile(id), so
+// saveHead saves an MP4's start, through its index (the moov box) plus headSlack, to headFile(id), so
 // Jellyfin's probe of a new title is served from disk without a stream link (stream.Read). Files with
 // the index at the end get none.
 func saveHead(id int, r io.Reader) error {
@@ -285,7 +324,7 @@ func saveHead(id int, r io.Reader) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), HeadFile(id))
+	return os.Rename(f.Name(), headFile(id))
 }
 
 // Reachable reports whether an artwork URL's host accepts connections (remembered per host, see hostStatus).
