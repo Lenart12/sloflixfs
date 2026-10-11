@@ -3,6 +3,7 @@ package fusefs
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -59,5 +60,19 @@ func TestListing(t *testing.T) {
 	}
 	if got := names(showDir(sloflix.Item{ID: 10}, "Show")); !slices.Contains(got, "Season 01") || slices.Contains(got, "Season 02") {
 		t.Fatalf("show dir %v: want Season 01 only (season 2 has no playable episode)", got)
+	}
+}
+
+// A newly added duplicate gets the " [id]" suffix, so the existing title keeps its name, unless only the
+// new one plays (a re-upload of a dead title): then it takes over the name.
+func TestUniqNames(t *testing.T) {
+	items := []sloflix.Item{{ID: 9, NameEn: "X"}, {ID: 5, NameEn: "X"}, {ID: 7, NameEn: "Y"}} // newest first, like the catalog
+	got := uniqNames(items, title, func(int) bool { return true })
+	if want := map[int]string{5: "X", 9: "X [9]", 7: "Y"}; !maps.Equal(got, want) {
+		t.Fatalf("names %v, want %v", got, want)
+	}
+	got = uniqNames(items, title, func(id int) bool { return id != 5 })
+	if want := map[int]string{5: "X [5]", 9: "X", 7: "Y"}; !maps.Equal(got, want) {
+		t.Fatalf("names with the old one dead %v, want %v", got, want)
 	}
 }

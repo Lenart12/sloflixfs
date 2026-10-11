@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -202,13 +203,34 @@ func title(it sloflix.Item) string {
 	return name(it)
 }
 
-// uniq returns name, or name with " [id]" appended if it was already taken.
-func uniq(seen map[string]bool, name string, id int) string {
-	if seen[name] {
-		name = fmt.Sprintf("%s [%d]", name, id)
+// uniqNames names each item, appending " [id]" to all but one of the items sharing a name. The plain name
+// goes to the oldest (lowest ID) playable one, so a newly added duplicate gets the suffix while a re-upload
+// of a dead title takes over its path; either way the path Jellyfin keeps watch history under stays.
+// playable is only checked for items sharing a name.
+func uniqNames(items []sloflix.Item, name func(sloflix.Item) string, playable func(id int) bool) map[int]string {
+	groups := map[string][]sloflix.Item{}
+	for _, it := range items {
+		groups[name(it)] = append(groups[name(it)], it)
 	}
-	seen[name] = true
-	return name
+	out := map[int]string{}
+	for n, g := range groups {
+		slices.SortFunc(g, func(a, b sloflix.Item) int {
+			if pa, pb := playable(a.ID), playable(b.ID); pa != pb {
+				if pa {
+					return -1
+				}
+				return 1
+			}
+			return a.ID - b.ID
+		})
+		for i, it := range g {
+			out[it.ID] = n
+			if i > 0 {
+				out[it.ID] = fmt.Sprintf("%s [%d]", n, it.ID)
+			}
+		}
+	}
+	return out
 }
 
 // mediaFiles lists the video file and, if present, its subtitle for item id under base name.
@@ -234,10 +256,10 @@ func dirChild(name string, mtime time.Time, list func() ([]child, error)) child 
 func catalogDir(typ, limit int, visible func(id int) bool, itemDir func(it sloflix.Item, name string) func() ([]child, error)) func() ([]child, error) {
 	return func() ([]child, error) {
 		items := sloflix.CachedCatalog(typ)
-		seen := map[string]bool{}
+		names := uniqNames(items, title, visible)
 		var out []child
 		for _, it := range sloflix.FirstN(items, limit) {
-			name := uniq(seen, title(it), it.ID) // hidden titles still take their name, so names stay stable
+			name := names[it.ID]
 			c := dirChild(name, it.CreatedAt(), itemDir(it, name))
 			c.visible = func() bool { return visible(it.ID) }
 			out = append(out, c)
@@ -297,11 +319,10 @@ func showDir(show sloflix.Item, name string) func() ([]child, error) {
 func seasonDir(showID, season int, showName string) func() ([]child, error) {
 	return func() ([]child, error) {
 		eps := sloflix.CachedEpisodes(showID, season)
-		seen := map[string]bool{}
+		names := uniqNames(eps, func(ep sloflix.Item) string { return fmt.Sprintf("%s S%02dE%02d", showName, season, ep.Episode) }, movieVisible)
 		var out []child
 		for _, ep := range eps {
-			base := uniq(seen, fmt.Sprintf("%s S%02dE%02d", showName, season, ep.Episode), ep.ID)
-			out = append(out, mediaFiles(ep.ID, base, ep.CreatedAt())...)
+			out = append(out, mediaFiles(ep.ID, names[ep.ID], ep.CreatedAt())...)
 		}
 		return out, nil
 	}
