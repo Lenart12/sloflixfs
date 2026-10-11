@@ -29,6 +29,8 @@ const (
 	// "error_expired" at 8h); a rejected link is re-resolved anyway.
 	urlTTL  = 7*time.Hour + 30*time.Minute
 	failTTL = time.Hour
+	// A failed login (bad credentials, sloflix down) is retried after this.
+	loginRetry = 5 * time.Minute
 	// A title the crawler keeps failing on (mostly dead CDN servers) waits failTTL, doubling with each
 	// failure in a row up to this.
 	crawlMaxWait = 128 * time.Hour // 1h doubled 7 times, about 5 days
@@ -62,8 +64,10 @@ var (
 	apiClient = &http.Client{Timeout: 30 * time.Second}
 	cdnClient = &http.Client{Transport: cdnTransport()}
 
-	tokenMu sync.Mutex
-	token   string
+	tokenMu  sync.Mutex
+	token    string
+	loginErr error     // the last login's error; guarded by tokenMu
+	loginAt  time.Time // when it failed; guarded by tokenMu
 
 	memMu sync.Mutex
 	mem   = map[string]memEntry{}
@@ -127,7 +131,9 @@ func newRequest(ctx context.Context, method, u string, body io.Reader) (*http.Re
 	return req, nil
 }
 
-func login(hi bool) (string, error) {
+// login returns the API token: cached in memory or on disk, or from logging in. A failed login is
+// remembered for loginRetry, so wrong credentials don't send a login request with every API call.
+func login(hi bool) (_ string, err error) {
 	tokenMu.Lock()
 	defer tokenMu.Unlock()
 	if token != "" {
@@ -137,6 +143,10 @@ func login(hi bool) (string, error) {
 		token = string(b)
 		return token, nil
 	}
+	if loginErr != nil && time.Since(loginAt) < loginRetry {
+		return "", loginErr
+	}
+	defer func() { loginErr, loginAt = err, time.Now() }()
 	wait(hi)
 	log.Printf("api: login")
 	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
@@ -158,7 +168,10 @@ func login(hi bool) (string, error) {
 		return "", errors.New("login failed")
 	}
 	token = r.Metadata.AccessToken
-	return token, writeFile(filepath.Join(cacheDir, "token"), []byte(token))
+	if err := writeFile(filepath.Join(cacheDir, "token"), []byte(token)); err != nil {
+		log.Printf("api: %v", err) // the token still works; it's just not kept across restarts
+	}
+	return token, nil
 }
 
 func doJSON(req *http.Request, out any) error {
