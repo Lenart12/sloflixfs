@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log"
 	"math/rand/v2"
 	"net/http"
@@ -43,7 +42,7 @@ func doodURL(code string, take func() error) (string, error) {
 			return nil, nil, err
 		}
 		defer resp.Body.Close()
-		b, err := io.ReadAll(resp.Body)
+		b, err := readAll(resp.Body, maxPage)
 		if err == nil && resp.StatusCode != http.StatusOK {
 			err = fmt.Errorf("doodstream %s: %s", u, resp.Status)
 		}

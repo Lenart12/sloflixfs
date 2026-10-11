@@ -42,6 +42,10 @@ const (
 	goneGrace = 24 * time.Hour
 	// Playback failures are remembered this long, so a probe retrying a dead title doesn't refetch each time.
 	playFailTTL = 5 * time.Minute
+	// Upper bounds on what upstream sends, far above real sizes (catalog pages ~0.2 MB, subtitles ~0.1 MB,
+	// player pages ~0.1 MB, ~20 catalog pages), so a broken or hostile server can't exhaust memory.
+	maxJSON, maxSubtitle, maxPage = 64 << 20, 10 << 20, 4 << 20
+	maxPages                      = 200
 )
 
 // Outcomes that were logged when first determined; callers don't log them again on every listing.
@@ -180,7 +184,7 @@ func doJSON(req *http.Request, out any) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxJSON)).Decode(out); err != nil {
 		// Usually a Cloudflare challenge page instead of JSON.
 		return fmt.Errorf("%s %s: HTTP %s: %w", req.Method, req.URL.Path, resp.Status, err)
 	}
@@ -313,6 +317,9 @@ func catalog(typ int) ([]Item, error) {
 		var all []Item
 		// 300 is the API's max page size.
 		for off := 0; ; off += 300 {
+			if off >= maxPages*300 {
+				return nil, fmt.Errorf("catalog %d: over %d pages", typ, maxPages)
+			}
 			var page []Item
 			if err := api(fmt.Sprintf("/media?sortBy=1&genres=&type=%d&query=&limit=300&offset=%d", typ, off), &page, false); err != nil {
 				return nil, err
@@ -379,6 +386,15 @@ func episodes(showID, season int) ([]Item, error) {
 	})
 }
 
+// readAll reads r, failing if it holds more than limit bytes. Upstream responses are bounded, not trusted to be.
+func readAll(r io.Reader, limit int64) ([]byte, error) {
+	b, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err == nil && int64(len(b)) > limit {
+		err = fmt.Errorf("response over %d bytes", limit)
+	}
+	return b, err
+}
+
 // writeFile replaces name atomically: a concurrent reader (a listing) never sees it empty or half-written,
 // and a failed write (a full disk) leaves the old content.
 func writeFile(name string, b []byte) error {
@@ -436,9 +452,9 @@ func fetchSubtitle(loc string) (bool, error) {
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("subtitle %s: %s", loc, resp.Status)
 	}
-	b, err := io.ReadAll(resp.Body)
+	b, err := readAll(resp.Body, maxSubtitle)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("subtitle %s: %w", loc, err)
 	}
 	old, _ := os.ReadFile(subFile(loc))
 	if err := writeFile(subFile(loc), b); err != nil {

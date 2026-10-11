@@ -171,7 +171,7 @@ func probeSize(stream string, headID int) (int64, error) {
 	size, _ := strconv.ParseInt(total, 10, 64)
 	if resp.StatusCode == http.StatusPartialContent && size > 0 {
 		if headID == 0 {
-			io.Copy(io.Discard, resp.Body) // read the 1 byte so the connection is reused for the stream that follows
+			io.Copy(io.Discard, io.LimitReader(resp.Body, 1)) // read the byte so the connection is reused for the stream that follows
 		} else if err := saveHead(headID, resp.Body); err != nil {
 			log.Printf("media %d: no probe cache: %v", headID, err) // Jellyfin's probe streams it instead
 		}
