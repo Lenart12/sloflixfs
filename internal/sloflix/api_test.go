@@ -107,3 +107,13 @@ func TestCatalogPaging(t *testing.T) {
 		t.Fatalf("endless catalog: err %v after %d pages", err, pages.Load())
 	}
 }
+
+// Subtitles are cached by their whole location: same-named ones in different folders don't collide, and
+// no location escapes the cache.
+func TestSubFile(t *testing.T) {
+	cacheDir = "/cache"
+	a, b, dots := subFile("a/x.vtt"), subFile("b/x.vtt"), subFile("..")
+	if a == b || filepath.Dir(a) != "/cache/subtitles" || filepath.Dir(dots) != "/cache/subtitles" {
+		t.Fatalf("subFile: %s %s %s", a, b, dots)
+	}
+}

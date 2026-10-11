@@ -3,6 +3,8 @@ package sloflix
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -413,8 +415,11 @@ func writeFile(name string, b []byte) error {
 	return os.Rename(f.Name(), name)
 }
 
+// subFile is where subtitle loc is cached, named by its hash: loc comes from upstream, and subtitles in
+// different folders can share a file name.
 func subFile(loc string) string {
-	return filepath.Join(cacheDir, "subs", filepath.Base(loc))
+	sum := sha256.Sum256([]byte(loc))
+	return filepath.Join(cacheDir, "subtitles", hex.EncodeToString(sum[:16]))
 }
 
 // Subtitle returns subtitle file loc, from the cache or downloaded.
