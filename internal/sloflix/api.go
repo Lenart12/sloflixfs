@@ -29,6 +29,9 @@ const (
 	// "error_expired" at 8h); a rejected link is re-resolved anyway.
 	urlTTL  = 7 * time.Hour
 	failTTL = time.Hour
+	// A title the crawler keeps failing on (mostly dead CDN servers) waits failTTL, doubling with each
+	// failure in a row up to this.
+	crawlMaxWait = 128 * time.Hour // 1h doubled 7 times, about 5 days
 	// A listing that shrinks by more than 10% is treated as an upstream glitch, so Jellyfin doesn't delete
 	// the missing titles. Only a shrink that persists this long is accepted.
 	shrinkAccept = 24 * time.Hour
@@ -75,7 +78,7 @@ var (
 
 	lookupMu    sync.Mutex
 	failed      = map[int]time.Time{} // failed playback lookups; guarded by lookupMu
-	crawlFailed = map[int]time.Time{} // failed crawler checks, kept apart so they don't block playback; guarded by lookupMu
+	crawlFailed = map[int]crawlFail{} // failed crawler checks, kept apart so they don't block playback; guarded by lookupMu
 
 	slots chan struct{} // upstream lookups/fetches in flight, capped by -concurrency; set in main
 

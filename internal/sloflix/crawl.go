@@ -9,12 +9,17 @@ import (
 	"time"
 )
 
+type crawlFail struct {
+	next time.Time     // no retry before this
+	wait time.Duration // failTTL, doubled with each failure in a row up to crawlMaxWait
+}
+
 // due reports whether the crawler should check id now, and in which order: bucket 0 is never checked,
 // 1 a title without a source or in its goneGrace period (rechecked after refreshTTL), 2 a playable one
 // (rechecked after metaTTL). written is when its meta was last written.
 func due(id int) (bucket int, written time.Time, ok bool) {
 	lookupMu.Lock()
-	recent := time.Since(crawlFailed[id]) < failTTL
+	recent := time.Now().Before(crawlFailed[id].next)
 	lookupMu.Unlock()
 	if recent {
 		return 0, time.Time{}, false
@@ -145,10 +150,18 @@ func crawl(id int) {
 			jfVerified()
 		}
 	}
+	lookupMu.Lock()
 	if err != nil {
-		lookupMu.Lock()
-		crawlFailed[id] = time.Now() // transient errors aren't persisted; don't retry for failTTL
-		lookupMu.Unlock()
+		// Transient errors aren't persisted, so back off here: a dead video server can stay dead for days.
+		f := crawlFailed[id]
+		f.wait = min(max(2*f.wait, failTTL), crawlMaxWait)
+		f.next = time.Now().Add(f.wait)
+		crawlFailed[id] = f
+	} else {
+		delete(crawlFailed, id)
+	}
+	lookupMu.Unlock()
+	if err != nil {
 		log.Printf("crawl %d: %v", id, err)
 		return
 	}

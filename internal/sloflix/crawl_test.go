@@ -16,7 +16,7 @@ func TestCrawlQueue(t *testing.T) {
 		os.MkdirAll(filepath.Join(cacheDir, d), 0755)
 	}
 	refreshTTL, metaTTL = time.Hour, 24*time.Hour
-	mem, crawlFailed = map[string]memEntry{}, map[int]time.Time{}
+	mem, crawlFailed = map[string]memEntry{}, map[int]crawlFail{}
 	listing := func(key string, v any) {
 		b, _ := json.Marshal(v)
 		os.WriteFile(filepath.Join(cacheDir, "json", key+".json"), b, 0644)
@@ -45,7 +45,7 @@ func TestCrawlQueue(t *testing.T) {
 	metaAt(11, 100<<20, 0)
 	metaAt(13, 0, 0)
 	metaAt(21, 0, 3*time.Hour)
-	crawlFailed[6] = time.Now()
+	crawlFailed[6] = crawlFail{next: time.Now().Add(time.Hour)}
 	listing(showKey(30), ShowInfo{Seasons: []int{1}}) // its episodes were never fetched; the crawler fetches them
 	slots = make(chan struct{}, 1)
 	stop := make(chan struct{})
@@ -66,5 +66,40 @@ func TestCrawlQueue(t *testing.T) {
 	}
 	if got, want := crawlQueue(1, 0), []int{1, 12, 21}; !slices.Equal(got, want) {
 		t.Fatalf("queue with -limit-movies 1: %v, want %v", got, want)
+	}
+}
+
+// A title the crawler keeps failing on waits longer each time, up to crawlMaxWait.
+func TestCrawlBackoff(t *testing.T) {
+	cacheDir = t.TempDir()
+	os.MkdirAll(filepath.Join(cacheDir, "meta"), 0755)
+	crawlFailed, slots = map[int]crawlFail{}, make(chan struct{}, 1)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case loQ <- struct{}{}:
+			case <-stop:
+				return
+			}
+		}
+	}()
+	apiBase, token = "http://127.0.0.1:1", "test" // every lookup fails
+	var waits, want []time.Duration
+	for w := time.Hour; w < crawlMaxWait; w *= 2 {
+		want = append(want, w)
+	}
+	want = append(want, crawlMaxWait, crawlMaxWait)
+	for range want {
+		crawl(1)
+		if _, _, ok := due(1); ok {
+			t.Fatal("a failed title is due right away")
+		}
+		waits = append(waits, crawlFailed[1].wait)
+		crawlFailed[1] = crawlFail{wait: crawlFailed[1].wait} // its wait is over
+	}
+	if !slices.Equal(waits, want) {
+		t.Fatalf("waits %v, want %v", waits, want)
 	}
 }

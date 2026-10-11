@@ -35,7 +35,7 @@ func TestGoneGrace(t *testing.T) {
 	cacheDir = t.TempDir()
 	os.MkdirAll(filepath.Join(cacheDir, "meta"), 0755)
 	token, refreshTTL = "test", 0 // refreshTTL 0: every crawl rechecks titles in their grace period
-	slots, failed, crawlFailed = make(chan struct{}, 1), map[int]time.Time{}, map[int]time.Time{}
+	slots, failed, crawlFailed = make(chan struct{}, 1), map[int]time.Time{}, map[int]crawlFail{}
 	stop := make(chan struct{})
 	defer close(stop)
 	go func() { // hand out rate-limit ticks freely
