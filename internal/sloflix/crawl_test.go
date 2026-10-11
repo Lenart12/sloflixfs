@@ -1,7 +1,9 @@
 package sloflix
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -133,5 +135,37 @@ func TestCrawlBackoff(t *testing.T) {
 	loadFailed()
 	if f, ok := crawlFailed[1]; !ok || f.Wait != crawlMaxWait || len(crawlFailed) != 1 {
 		t.Fatalf("after a restart: %v", crawlFailed)
+	}
+}
+
+// A title verified while its meta can't be written (a full disk) isn't listed, so it's retried in failTTL
+// instead of counting as checked.
+func TestCrawlMetaWriteFails(t *testing.T) {
+	video := make([]byte, minVideoSize+1)
+	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.ServeContent(w, r, "f.mp4", time.Time{}, bytes.NewReader(video))
+	}))
+	defer cdn.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"status":"success","data":{"media_sources":[{"media_source":"https://player.sloflix.com/?source=%s/f.mp4","media_source_name":"X"}]}}`, cdn.URL)
+	}))
+	defer srv.Close()
+	cacheDir, apiBase, token = t.TempDir(), srv.URL, "test"
+	crawlFailed, slots = map[int]crawlFail{}, make(chan struct{}, 1)
+	os.MkdirAll(filepath.Join(cacheDir, "meta"), 0555) // unwritable
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case loQ <- struct{}{}:
+			case <-stop:
+				return
+			}
+		}
+	}()
+	crawl(1)
+	if f, ok := crawlFailed[1]; !ok || f.Wait != 0 || time.Until(f.Next) > failTTL {
+		t.Fatalf("after a failed meta write: %+v (recorded %v), want a retry in failTTL", f, ok)
 	}
 }

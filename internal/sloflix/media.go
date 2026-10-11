@@ -29,8 +29,9 @@ type Meta struct {
 	URLAt time.Time `json:"url_at,omitzero"`
 }
 
-// sharedErr is a failure of sloflix's API or DoodStream (down, a captcha, the lookup limit), which every
-// title shares: unlike a dead video server or a missing source, it's no reason to check a title less often.
+// sharedErr is a failure every title shares: sloflix's API or DoodStream (down, a captcha, the lookup
+// limit), or the cache disk. Unlike a dead video server or a missing source, it's no reason to check a
+// title less often.
 type sharedErr struct{ error }
 
 func (e sharedErr) Unwrap() error { return e.error }
@@ -166,7 +167,12 @@ func resolve(id int, hi bool) (string, Meta, error) {
 		return "", m, noSource
 	}
 	m.URL, m.URLAt = stream, time.Now()
-	writeMeta(id, m)
+	if err := writeMeta(id, m); err != nil {
+		if !hi { // unrecorded, the title isn't listed: retry it later
+			return "", m, sharedErr{err}
+		}
+		log.Printf("media %d: %v", id, err) // the link still plays
+	}
 	if !hi && prev.Size == 0 && probeCache > 0 { // a new title: Jellyfin will probe it (see saveHeads)
 		writeFile(WantFile(id), nil)
 	}
@@ -188,11 +194,9 @@ func metaFile(id int) string {
 	return filepath.Join(cacheDir, "meta", fmt.Sprint(id)+".json")
 }
 
-func writeMeta(id int, m Meta) {
+func writeMeta(id int, m Meta) error {
 	b, _ := json.Marshal(m)
-	if err := writeFile(metaFile(id), b); err != nil {
-		log.Printf("media %d: %v", id, err)
-	}
+	return writeFile(metaFile(id), b)
 }
 
 func readMeta(id int) (Meta, time.Time, bool) {
@@ -210,7 +214,9 @@ func SetSize(id int, size int64) {
 	m, _, _ := readMeta(id)
 	log.Printf("media %d changed: size %d -> %d", id, m.Size, size)
 	m.Size, m.Changed = size, time.Now()
-	writeMeta(id, m)
+	if err := writeMeta(id, m); err != nil {
+		log.Printf("media %d: %v", id, err)
+	}
 	os.Remove(HeadFile(id)) // it's from the old file
 }
 

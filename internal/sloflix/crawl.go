@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -178,6 +179,17 @@ func crawlQueue(limitMovies, limitShows int) []int {
 
 // crawl checks one title, unless playback did meanwhile, and revalidates its cached subtitle.
 func crawl(id int) {
+	defer func() {
+		if r := recover(); r != nil {
+			// A bug: keep the title out for crawlMaxWait, also across restarts, rather than crash (unmounting
+			// the library) and hit it again after every restart.
+			log.Printf("crawl %d: panic: %v\n%s", id, r, debug.Stack())
+			lookupMu.Lock()
+			crawlFailed[id] = crawlFail{Next: time.Now().Add(crawlMaxWait), Wait: crawlMaxWait}
+			lookupMu.Unlock()
+			saveFailed()
+		}
+	}()
 	if _, _, ok := due(id); !ok {
 		return
 	}
@@ -215,6 +227,8 @@ func crawl(id int) {
 	} else if changed {
 		log.Printf("media %d: subtitle %s changed", id, m.Sub)
 		m.Changed = time.Now()
-		writeMeta(id, m)
+		if err := writeMeta(id, m); err != nil {
+			log.Printf("crawl %d: %v", id, err)
+		}
 	}
 }
