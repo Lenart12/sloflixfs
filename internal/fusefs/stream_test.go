@@ -79,6 +79,26 @@ func TestStream(t *testing.T) {
 	s.Release(context.Background())
 }
 
+// An unreachable video server fails the read without a forced re-resolve (an API call, maybe a DoodStream
+// lookup) per read: the new link would point to the same server.
+func TestStreamDeadServer(t *testing.T) {
+	var forced atomic.Int32
+	s := &stream{size: 1 << 20, resolve: func(force bool) (string, error) {
+		if force {
+			forced.Add(1)
+		}
+		return "http://127.0.0.1:1/f.mp4", nil
+	}}
+	for range 3 {
+		if _, errno := s.Read(context.Background(), make([]byte, 100), 0); errno == 0 {
+			t.Fatal("read from a dead server succeeded")
+		}
+	}
+	if n := forced.Load(); n != 0 {
+		t.Fatalf("%d forced re-resolves for 3 reads", n)
+	}
+}
+
 func TestStreamStall(t *testing.T) {
 	readTimeout = 100 * time.Millisecond
 	data := bytes.Repeat([]byte("x"), 1<<16)

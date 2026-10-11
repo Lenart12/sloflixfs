@@ -61,8 +61,7 @@ func (s *stream) open(off int64) error {
 		}
 		resp, err := sloflix.GetRange(u, off)
 		if err != nil {
-			log.Printf("stream: %v", err)
-			continue
+			return err // the video server is unreachable: a new link would most likely point to it again
 		}
 		if resp.StatusCode == http.StatusPartialContent {
 			_, total, _ := strings.Cut(resp.Header.Get("Content-Range"), "/")

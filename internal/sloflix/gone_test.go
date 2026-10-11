@@ -97,3 +97,33 @@ func TestGoneGrace(t *testing.T) {
 		t.Fatalf("playback retries made %d API calls, want 1", n)
 	}
 }
+
+// Playback doesn't verify a title, so opening one in its goneGrace period keeps it there for the crawler.
+func TestPlaybackKeepsGone(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"success","data":{"media_sources":[{"media_source":"https://player.sloflix.com/?source=https://cdn.example/f.mp4","media_source_name":"X"}]}}`))
+	}))
+	defer srv.Close()
+	apiBase, token = srv.URL, "test"
+	cacheDir = t.TempDir()
+	os.MkdirAll(filepath.Join(cacheDir, "meta"), 0755)
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		for {
+			select {
+			case hiQ <- struct{}{}:
+			case <-stop:
+				return
+			}
+		}
+	}()
+	gone := time.Now().Add(-time.Hour).Round(time.Second)
+	writeMeta(1, Meta{Size: 100 << 20, Gone: gone})
+	if _, _, err := resolve(1, true); err != nil {
+		t.Fatal(err)
+	}
+	if m, _, _ := readMeta(1); !m.Gone.Equal(gone) {
+		t.Fatalf("gone after playback = %v, want %v", m.Gone, gone)
+	}
+}

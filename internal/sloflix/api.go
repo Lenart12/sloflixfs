@@ -428,6 +428,9 @@ func fetchSubtitle(loc string) (bool, error) {
 		return false, err
 	}
 	old, _ := os.ReadFile(subFile(loc))
-	writeFile(subFile(loc)+".etag", []byte(resp.Header.Get("ETag")))
-	return !bytes.Equal(old, b), writeFile(subFile(loc), b)
+	if err := writeFile(subFile(loc), b); err != nil {
+		return false, err
+	}
+	// After the content: a new ETag with the old content would keep it stale for good.
+	return !bytes.Equal(old, b), writeFile(subFile(loc)+".etag", []byte(resp.Header.Get("ETag")))
 }

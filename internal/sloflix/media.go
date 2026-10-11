@@ -115,8 +115,9 @@ func resolve(id int, hi bool) (string, Meta, error) {
 		}
 	}
 	if stream != "" && hi && prev.Size > 0 {
-		// Playback skips the size probe: the stream checks the size on every response (stream.open).
-		m.Size = prev.Size
+		// Playback skips the size probe: the stream checks the size on every response (stream.open). Nothing
+		// was verified, so a title in its goneGrace period stays in it for the crawler to recheck.
+		m.Size, m.Gone = prev.Size, prev.Gone
 	} else if stream != "" {
 		start := time.Now()
 		size, err := probeSize(stream, 0)
