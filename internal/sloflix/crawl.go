@@ -193,12 +193,10 @@ func crawl(id int) {
 	if _, _, ok := due(id); !ok {
 		return
 	}
-	_, listed := Info(id)
+	_, wasListed := Info(id)
 	_, m, err := resolve(id, false)
-	if err == nil && listed != nil {
-		if _, err := Info(id); err == nil {
-			jfVerified()
-		}
+	if err == nil && !wasListed { // resolve succeeds only for a playable title: it's newly listed
+		jfVerified()
 	}
 	lookupMu.Lock()
 	if err != nil {

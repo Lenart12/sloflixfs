@@ -26,6 +26,9 @@ var (
 
 // jfVerified counts a newly listed title and scans if the probe cache is half full.
 func jfVerified() {
+	if jfURL == "" {
+		return
+	}
 	jfMu.Lock()
 	jfNew++
 	jfMu.Unlock()

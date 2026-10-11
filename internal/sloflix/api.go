@@ -50,14 +50,11 @@ const (
 	maxPages                      = 200
 )
 
-// Outcomes that were logged when first determined; callers don't log them again on every listing.
-var (
-	errNoSource       = errors.New("no direct source")
-	errFailedRecently = errors.New("lookup failed recently")
-)
+// errFailedRecently is a playback lookup's failure, logged when it happened, repeated within playFailTTL.
+var errFailedRecently = errors.New("lookup failed recently")
 
-// Quiet reports whether err is one of those outcomes.
-func Quiet(err error) bool { return errors.Is(err, errNoSource) || errors.Is(err, errFailedRecently) }
+// Quiet reports whether err was already logged (errFailedRecently), so a caller doesn't log it again.
+func Quiet(err error) bool { return errors.Is(err, errFailedRecently) }
 
 var (
 	cacheDir   string

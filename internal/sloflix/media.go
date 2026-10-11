@@ -179,15 +179,12 @@ func resolve(id int, hi bool) (string, Meta, error) {
 	return stream, m, nil
 }
 
-// Info returns a title's persisted meta. Titles the crawler hasn't verified, or found without a source, are
-// an error. A playable title stays listed through transient errors and upstream reporting it gone within
-// goneGrace (resolve keeps its size), so Jellyfin doesn't drop it and its watch history over a glitch.
-func Info(id int) (Meta, error) {
+// Info returns a title's persisted meta and whether it's listed: verified by the crawler as playable. A
+// playable title stays listed through transient errors and upstream reporting it gone within goneGrace
+// (resolve keeps its size), so Jellyfin doesn't drop it and its watch history over a glitch.
+func Info(id int) (Meta, bool) {
 	m, _, _ := readMeta(id)
-	if m.Size < minVideoSize {
-		return m, errNoSource
-	}
-	return m, nil
+	return m, m.Size >= minVideoSize
 }
 
 func metaFile(id int) string {

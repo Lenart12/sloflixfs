@@ -101,11 +101,8 @@ type video struct {
 }
 
 func (v *video) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) syscall.Errno {
-	m, err := sloflix.Info(v.id)
-	if err != nil {
-		if !sloflix.Quiet(err) {
-			log.Printf("getattr %d: %v", v.id, err)
-		}
+	m, ok := sloflix.Info(v.id)
+	if !ok {
 		return syscall.EIO
 	}
 	mtime := mtimeOf(v.mtime, m)
@@ -132,7 +129,7 @@ func (v *video) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, 
 		},
 	}
 	// A new title's start, saved by the crawler: Jellyfin's probe is served from it without resolving a link.
-	if m, err := sloflix.Info(v.id); err == nil {
+	if m, ok := sloflix.Info(v.id); ok {
 		if f, err := os.Open(sloflix.HeadFile(v.id)); err == nil {
 			if st, err := f.Stat(); err == nil {
 				s.size, s.head, s.headLen = m.Size, f, st.Size()
@@ -233,18 +230,18 @@ func uniqNames(items []sloflix.Item, name func(sloflix.Item) string, playable fu
 	return out
 }
 
-// mediaFiles lists the video file and, if present, its subtitle for item id under base name.
-// Items the crawler hasn't verified as playable are left out.
-func mediaFiles(id int, base string, mtime time.Time) []child {
-	m, err := sloflix.Info(id)
-	if err != nil {
-		return nil
+// mediaFiles lists the video file and, if present, its subtitle for item id under base name, and returns
+// its meta. Items the crawler hasn't verified as playable are left out.
+func mediaFiles(id int, base string, mtime time.Time) ([]child, sloflix.Meta) {
+	m, ok := sloflix.Info(id)
+	if !ok {
+		return nil, m
 	}
 	out := []child{{name: base + ".mp4", node: func() (fs.InodeEmbedder, error) { return &video{id: id, mtime: mtime}, nil }}}
 	if m.Sub != "" {
 		out = append(out, child{name: base + ".sl.vtt", node: subtitleNode(m.Sub, mtimeOf(mtime, m))})
 	}
-	return out
+	return out, m
 }
 
 func dirChild(name string, mtime time.Time, list func() ([]child, error)) child {
@@ -269,8 +266,8 @@ func catalogDir(typ, limit int, visible func(id int) bool, itemDir func(it slofl
 }
 
 func movieVisible(id int) bool {
-	_, err := sloflix.Info(id)
-	return err == nil
+	_, ok := sloflix.Info(id)
+	return ok
 }
 
 // showVisible reports whether any of a show's episodes is playable. It reads cached listings only, so
@@ -280,7 +277,7 @@ func showVisible(id int) bool {
 	for _, s := range si.Seasons {
 		eps := sloflix.CachedEpisodes(id, s)
 		for _, ep := range eps {
-			if _, err := sloflix.Info(ep.ID); err == nil {
+			if _, ok := sloflix.Info(ep.ID); ok {
 				return true
 			}
 		}
@@ -291,11 +288,10 @@ func showVisible(id int) bool {
 func movieDir(it sloflix.Item, name string) func() ([]child, error) {
 	created := it.CreatedAt()
 	return func() ([]child, error) {
-		files := mediaFiles(it.ID, name, created)
+		files, m := mediaFiles(it.ID, name, created)
 		if files == nil {
 			return nil, nil
 		}
-		m, _ := sloflix.Info(it.ID)
 		return append(files, nfoChild("movie.nfo", "movie", it, m.Plot, mtimeOf(created, m))...), nil
 	}
 }
@@ -322,7 +318,8 @@ func seasonDir(showID, season int, showName string) func() ([]child, error) {
 		names := uniqNames(eps, func(ep sloflix.Item) string { return fmt.Sprintf("%s S%02dE%02d", showName, season, ep.Episode) }, movieVisible)
 		var out []child
 		for _, ep := range eps {
-			out = append(out, mediaFiles(ep.ID, names[ep.ID], ep.CreatedAt())...)
+			files, _ := mediaFiles(ep.ID, names[ep.ID], ep.CreatedAt())
+			out = append(out, files...)
 		}
 		return out, nil
 	}

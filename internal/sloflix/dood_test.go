@@ -109,11 +109,11 @@ func TestResolveDoodSpelling(t *testing.T) {
 	if _, _, err := resolve(8, false); err == nil || !strings.Contains(err.Error(), "broken upload") {
 		t.Fatalf("tiny file: %v", err)
 	}
-	if _, err := Info(8); err == nil {
+	if _, ok := Info(8); ok {
 		t.Fatal("tiny file is listed")
 	}
 	writeMeta(9, Meta{Size: 65536}) // recorded as playable before minVideoSize existed
-	if _, err := Info(9); err == nil {
+	if _, ok := Info(9); ok {
 		t.Fatal("tiny file recorded earlier is listed")
 	}
 	if _, _, err := resolve(10, false); err == nil || !strings.Contains(err.Error(), "no direct source") {

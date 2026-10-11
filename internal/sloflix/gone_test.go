@@ -54,14 +54,14 @@ func TestGoneGrace(t *testing.T) {
 		t.Fatalf("first gone: size=%d gone=%v err=%v", m.Size, m.Gone, err)
 	}
 	crawl(1) // recheck within grace
-	if m, err := Info(1); err != nil || m.Size != 100<<20 {
-		t.Fatalf("within grace should stay listed: size=%d err=%v", m.Size, err)
+	if m, ok := Info(1); !ok || m.Size != 100<<20 {
+		t.Fatalf("within grace should stay listed: size=%d", m.Size)
 	}
 	delete(crawlFailed, 1)
 	captcha.Store(true) // a transient failure during the recheck
 	crawl(1)
-	if m, err := Info(1); err != nil || m.Size != 100<<20 {
-		t.Fatalf("transient failure within grace should stay listed: size=%d err=%v", m.Size, err)
+	if m, ok := Info(1); !ok || m.Size != 100<<20 {
+		t.Fatalf("transient failure within grace should stay listed: size=%d", m.Size)
 	}
 	captcha.Store(false)
 	delete(crawlFailed, 1)
@@ -69,7 +69,7 @@ func TestGoneGrace(t *testing.T) {
 	m.Gone = time.Now().Add(-goneGrace - time.Minute)
 	writeMeta(1, m)
 	crawl(1)
-	if _, err := Info(1); err == nil {
+	if _, ok := Info(1); ok {
 		t.Fatal("after grace should be hidden")
 	}
 	if m, _, _ := readMeta(1); m.Size != 0 {
@@ -81,8 +81,8 @@ func TestGoneGrace(t *testing.T) {
 	}
 	delete(crawlFailed, 1) // the hide was a lookup failure; recheck for real
 	crawl(1)
-	if _, err := Info(1); err == nil || doodCalls.Load() != 3 {
-		t.Fatalf("recheck of a hidden title: err=%v DoodStream requests=%d, want 3", err, doodCalls.Load())
+	if _, ok := Info(1); ok || doodCalls.Load() != 3 {
+		t.Fatalf("recheck of a hidden title: listed=%v DoodStream requests=%d, want 3", ok, doodCalls.Load())
 	}
 
 	// A failed playback lookup is remembered: retrying within playFailTTL makes no API call.

@@ -95,7 +95,7 @@ func TestWriteMetaAtomic(t *testing.T) {
 		}
 	}()
 	for i := range 5000 {
-		if _, err := Info(1); err != nil {
+		if _, ok := Info(1); !ok {
 			close(stop)
 			<-done
 			t.Fatalf("read %d hid the title during a rewrite", i)
