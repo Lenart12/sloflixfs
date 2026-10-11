@@ -225,7 +225,7 @@ func crawl(id int) {
 	if changed, err := fetchSubtitle(m.Sub); err != nil {
 		log.Printf("crawl %d: %v", id, err)
 	} else if changed {
-		log.Printf("media %d: subtitle %s changed", id, m.Sub)
+		log.Printf("media %d: subtitle %q changed", id, m.Sub)
 		m.Changed = time.Now()
 		if err := writeMeta(id, m); err != nil {
 			log.Printf("crawl %d: %v", id, err)

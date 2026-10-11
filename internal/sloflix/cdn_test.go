@@ -58,6 +58,10 @@ func TestProbeSize(t *testing.T) {
 	if _, err := probeSize("http://"+dead.Addr().String()+"/f", 0); err == nil || !strings.Contains(err.Error(), "skipped") {
 		t.Fatalf("third probe of a dead server should be skipped: %v", err)
 	}
+	hosts = map[string]hostCheck{}
+	if _, err := probeSize("http://"+dead.Addr().String()+"/f?token=secret", 0); err == nil || strings.Contains(err.Error(), "secret") {
+		t.Fatalf("a failed request's error must not carry the link's token: %v", err)
+	}
 }
 
 // A new title's probe saves the file's start through its index (moov) plus headSlack; a file with the

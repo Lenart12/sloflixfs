@@ -39,7 +39,7 @@ func doodURL(code string, take func() error) (string, error) {
 		req.Header.Set("Referer", ref)
 		resp, err := cdnClient.Do(req)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, redact(err)
 		}
 		defer resp.Body.Close()
 		b, err := readAll(resp.Body, maxPage)

@@ -94,7 +94,20 @@ func cdnDo(req *http.Request) (*http.Response, error) {
 	}
 	resp, err := cdnClient.Do(req)
 	hostResult(addr, err)
-	return resp, err
+	return resp, redact(err)
+}
+
+// redact drops the query, which carries stream tokens, from a request error's URL, so logging the error
+// doesn't log a working link.
+func redact(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		if u, perr := url.Parse(ue.URL); perr == nil {
+			u.RawQuery = ""
+			ue.URL = u.String()
+		}
+	}
+	return err
 }
 
 var (

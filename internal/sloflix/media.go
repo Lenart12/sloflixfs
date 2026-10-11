@@ -141,7 +141,7 @@ func resolve(id int, hi bool) (string, Meta, error) {
 	if stream == "" && missing != nil {
 		noSource = fmt.Errorf("no direct source: %w", missing)
 	} else if stream == "" {
-		noSource = fmt.Errorf("no direct source (got %d: %v)", len(d.Sources), describeSources(d.Sources))
+		noSource = fmt.Errorf("no direct source (got %d: %q)", len(d.Sources), describeSources(d.Sources))
 	}
 	m.Changed = prev.Changed
 	if noSource != nil && prev.Size > 0 {

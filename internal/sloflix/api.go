@@ -227,7 +227,7 @@ func api(path string, out any, hi bool) error {
 			tokenMu.Unlock()
 			continue
 		}
-		return fmt.Errorf("%s: %s", path, msg)
+		return fmt.Errorf("%s: %q", path, msg)
 	}
 }
 
@@ -438,7 +438,7 @@ func Subtitle(loc string) ([]byte, error) {
 func fetchSubtitle(loc string) (bool, error) {
 	defer acquire(false)()
 	wait(false)
-	log.Printf("sub: GET %s", loc)
+	log.Printf("sub: GET %q", loc)
 	req, err := newRequest(context.Background(), "GET", subBase+url.PathEscape(loc), nil)
 	if err != nil {
 		return false, err
@@ -455,11 +455,11 @@ func fetchSubtitle(loc string) (bool, error) {
 		return false, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("subtitle %s: %s", loc, resp.Status)
+		return false, fmt.Errorf("subtitle %q: %s", loc, resp.Status)
 	}
 	b, err := readAll(resp.Body, maxSubtitle)
 	if err != nil {
-		return false, fmt.Errorf("subtitle %s: %w", loc, err)
+		return false, fmt.Errorf("subtitle %q: %w", loc, err)
 	}
 	old, _ := os.ReadFile(subFile(loc))
 	if err := writeFile(subFile(loc), b); err != nil {
