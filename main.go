@@ -106,9 +106,9 @@ func main() {
 
 // envDefaults lets every flag also be set from the environment, as SLOFLIX_ and the flag name in upper case
 // with - as _ (-probe-cache: SLOFLIX_PROBE_CACHE). The command line wins over the environment.
-func envDefaults(fs *flag.FlagSet, getenv func(string) string) error {
+func envDefaults(fset *flag.FlagSet, getenv func(string) string) error {
 	var err error
-	fs.VisitAll(func(f *flag.Flag) {
+	fset.VisitAll(func(f *flag.Flag) {
 		name := "SLOFLIX_" + strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
 		f.Usage += " (env " + name + ")"
 		if v := getenv(name); v != "" && err == nil {

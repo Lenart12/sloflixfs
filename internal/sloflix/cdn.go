@@ -94,7 +94,7 @@ func cdnDo(req *http.Request) (*http.Response, error) {
 
 var (
 	hostMu sync.Mutex
-	hostOK = map[string]hostCheck{} // host:port -> last connection outcome (artwork hosts, video servers)
+	hosts  = map[string]hostCheck{} // host:port -> last connection outcome (artwork hosts, video servers)
 )
 
 type hostCheck struct {
@@ -108,7 +108,7 @@ type hostCheck struct {
 func hostStatus(addr string) (ok, known bool) {
 	hostMu.Lock()
 	defer hostMu.Unlock()
-	c := hostOK[addr]
+	c := hosts[addr]
 	return c.ok, (c.ok || c.fails >= 2) && time.Since(c.at) < failTTL
 }
 
@@ -116,14 +116,14 @@ func hostStatus(addr string) (ok, known bool) {
 func hostResult(addr string, err error) int {
 	hostMu.Lock()
 	defer hostMu.Unlock()
-	c := hostOK[addr]
+	c := hosts[addr]
 	if err != nil {
 		c.fails++
 	} else {
 		c.fails = 0
 	}
 	c.ok, c.at = err == nil, time.Now()
-	hostOK[addr] = c
+	hosts[addr] = c
 	return c.fails
 }
 

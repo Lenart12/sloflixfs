@@ -36,7 +36,9 @@ func saveFailed() {
 	maps.DeleteFunc(crawlFailed, func(_ int, f crawlFail) bool { return time.Since(f.Next) > crawlMaxWait })
 	b, _ := json.Marshal(crawlFailed)
 	lookupMu.Unlock()
-	writeFile(failedFile(), b)
+	if err := writeFile(failedFile(), b); err != nil {
+		log.Printf("crawl: %v", err)
+	}
 }
 
 // due reports whether the crawler should check id now, and in which order: bucket 0 is never checked,

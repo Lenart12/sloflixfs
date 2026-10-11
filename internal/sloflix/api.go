@@ -77,7 +77,7 @@ var (
 	failed      = map[int]time.Time{} // failed playback lookups; guarded by lookupMu
 	crawlFailed = map[int]crawlFail{} // failed crawler checks, kept apart so they don't block playback; guarded by lookupMu
 
-	slots chan struct{} // upstream lookups/fetches in flight, capped by -concurrency; set in main
+	slots chan struct{} // upstream lookups/fetches in flight, capped by -concurrency; set by Start
 
 	hiQ = make(chan struct{})
 	loQ = make(chan struct{})
@@ -274,7 +274,9 @@ func cached[T any](key string, fetch func() (T, error)) (T, error) {
 		return v, err
 	}
 	b, _ := json.Marshal(v)
-	writeFile(file, b)
+	if err := writeFile(file, b); err != nil {
+		log.Printf("%s: %v", key, err) // still served from memory
+	}
 	memMu.Lock()
 	mem[key] = memEntry{v, time.Now()}
 	memMu.Unlock()
@@ -331,10 +333,14 @@ func peek[T any](key string) (T, bool) {
 	return v, err == nil && json.Unmarshal(b, &v) == nil
 }
 
-// CachedCatalog, CachedShow and CachedEpisodes return listings from the cache, however old, without
-// fetching, so listing the filesystem never waits on upstream. The crawler keeps them fresh.
-func CachedCatalog(typ int) []Item   { v, _ := peek[[]Item](catalogKey(typ)); return v }
+// CachedCatalog returns the catalog of typ from the cache, however old, without fetching, so listing the
+// filesystem never waits on upstream. The crawler keeps it fresh. Likewise CachedShow and CachedEpisodes.
+func CachedCatalog(typ int) []Item { v, _ := peek[[]Item](catalogKey(typ)); return v }
+
+// CachedShow returns a show's seasons and plot from the cache (see CachedCatalog).
 func CachedShow(showID int) ShowInfo { v, _ := peek[ShowInfo](showKey(showID)); return v }
+
+// CachedEpisodes returns a season's episodes from the cache (see CachedCatalog).
 func CachedEpisodes(showID, season int) []Item {
 	v, _ := peek[[]Item](episodesKey(showID, season))
 	return v

@@ -35,41 +35,60 @@ type sharedErr struct{ error }
 
 func (e sharedErr) Unwrap() error { return e.error }
 
-// resolve fetches a fresh stream URL for id and records it, its size and subtitle in meta.
-func resolve(id int, hi bool) (string, Meta, error) {
-	release := acquire(hi)
-	defer func() { release() }()
-	var d struct {
-		Plot    string `json:"media_description"`
-		Sources []struct {
-			Source string  `json:"media_source"`
-			Name   string  `json:"media_source_name"`
-			Sub    *string `json:"subtitle_location"`
-		} `json:"media_sources"`
-	}
-	if err := api(fmt.Sprintf("/media/single/%d?dont_count_view=true", id), &d, hi); err != nil {
-		return "", Meta{}, sharedErr{err}
-	}
-	m := Meta{Plot: d.Plot}
-	// Prefer sloflix's own direct link; otherwise extract one from a DoodStream embed.
-	var stream, doodCode string
-	var doodSub *string
-	for _, s := range d.Sources {
+// source is one of a title's upstream sources: a link to sloflix's player or a video host's embed.
+type source struct {
+	Source string  `json:"media_source"`
+	Name   string  `json:"media_source_name"`
+	Sub    *string `json:"subtitle_location"`
+}
+
+// pickSource prefers sloflix's own direct link (stream); otherwise it returns the first DoodStream embed's
+// video code, to extract a link from. sub is the chosen source's subtitle.
+func pickSource(sources []source) (stream, doodCode string, sub *string) {
+	for _, s := range sources {
 		u, err := url.Parse(s.Source)
 		if err != nil {
 			continue
 		}
 		if u.Host == "player.sloflix.com" {
-			stream = strings.TrimSpace(u.Query().Get("source")) // some carry a trailing newline
-			if s.Sub != nil {
-				m.Sub = *s.Sub
-			}
-			break
+			return strings.TrimSpace(u.Query().Get("source")), "", s.Sub // some carry a trailing newline
 		}
 		// Embed (/e/) or download-page (/d/) links; the mirror serves either code under /e/.
 		if doodCode == "" && strings.Contains(strings.ToLower(s.Name), "doodstream") && (strings.HasPrefix(u.Path, "/e/") || strings.HasPrefix(u.Path, "/d/")) {
-			doodCode, doodSub = path.Base(u.Path), s.Sub
+			doodCode, sub = path.Base(u.Path), s.Sub
 		}
+	}
+	return "", doodCode, sub
+}
+
+// describeSources lists sources as name@host, for the error of a title without a usable one.
+func describeSources(sources []source) []string {
+	var out []string
+	for _, s := range sources {
+		host := s.Source // some don't parse as URLs
+		if u, err := url.Parse(s.Source); err == nil {
+			host = u.Host
+		}
+		out = append(out, fmt.Sprintf("%s@%s", s.Name, host))
+	}
+	return out
+}
+
+// resolve fetches a fresh stream URL for id and records it, its size and subtitle in meta.
+func resolve(id int, hi bool) (string, Meta, error) {
+	release := acquire(hi)
+	defer func() { release() }() // not defer release(): it's replaced while waiting for DoodStream
+	var d struct {
+		Plot    string   `json:"media_description"`
+		Sources []source `json:"media_sources"`
+	}
+	if err := api(fmt.Sprintf("/media/single/%d?dont_count_view=true", id), &d, hi); err != nil {
+		return "", Meta{}, sharedErr{err}
+	}
+	m := Meta{Plot: d.Plot}
+	stream, doodCode, sub := pickSource(d.Sources)
+	if sub != nil {
+		m.Sub = *sub
 	}
 	// missing is set when the source exists but its video is gone; that's persisted as no source, while
 	// other errors (dead hosts, timeouts) are transient.
@@ -93,9 +112,6 @@ func resolve(id int, hi bool) (string, Meta, error) {
 			}
 			missing = fmt.Errorf("DoodStream %s: %w", doodCode, err)
 			m.DeadCode = doodCode
-		}
-		if doodSub != nil {
-			m.Sub = *doodSub
 		}
 	}
 	if stream != "" && hi && prev.Size > 0 {
@@ -123,15 +139,7 @@ func resolve(id int, hi bool) (string, Meta, error) {
 	if stream == "" && missing != nil {
 		noSource = fmt.Errorf("no direct source: %w", missing)
 	} else if stream == "" {
-		var got []string
-		for _, s := range d.Sources {
-			host := s.Source // some don't parse as URLs
-			if u, err := url.Parse(s.Source); err == nil {
-				host = u.Host
-			}
-			got = append(got, fmt.Sprintf("%s@%s", s.Name, host))
-		}
-		noSource = fmt.Errorf("no direct source (got %d: %v)", len(d.Sources), got)
+		noSource = fmt.Errorf("no direct source (got %d: %v)", len(d.Sources), describeSources(d.Sources))
 	}
 	m.Changed = prev.Changed
 	if noSource != nil && prev.Size > 0 {
@@ -152,13 +160,12 @@ func resolve(id int, hi bool) (string, Meta, error) {
 			os.Remove(HeadFile(id)) // it's from the old file
 		}
 	}
-	if noSource == nil {
-		m.URL, m.URLAt = stream, time.Now()
-	}
-	writeMeta(id, m)
 	if noSource != nil {
+		writeMeta(id, m)
 		return "", m, noSource
 	}
+	m.URL, m.URLAt = stream, time.Now()
+	writeMeta(id, m)
 	if !hi && prev.Size == 0 && probeCache > 0 { // a new title: Jellyfin will probe it (see saveHeads)
 		writeFile(WantFile(id), nil)
 	}
@@ -182,7 +189,9 @@ func metaFile(id int) string {
 
 func writeMeta(id int, m Meta) {
 	b, _ := json.Marshal(m)
-	writeFile(metaFile(id), b)
+	if err := writeFile(metaFile(id), b); err != nil {
+		log.Printf("media %d: %v", id, err)
+	}
 }
 
 func readMeta(id int) (Meta, time.Time, bool) {

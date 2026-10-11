@@ -54,7 +54,7 @@ func (s *stream) close() {
 
 func (s *stream) open(off int64) error {
 	s.close()
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		u, err := s.resolve(attempt > 0)
 		if err != nil {
 			return err
@@ -102,7 +102,7 @@ func (s *stream) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadRes
 		}
 	}
 	buf := dest
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		if off >= s.size {
 			return fuse.ReadResultData(nil), 0
 		}
