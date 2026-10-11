@@ -25,9 +25,9 @@ const (
 	subBase   = "https://sloflix.com/subtitles/"
 	userAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
 	referer   = "https://player.sloflix.com/"
-	// Stream links stay valid for at least 4.6h (measured: still valid at 4.6h, "error_expired" at 18h);
-	// a rejected link is re-resolved anyway.
-	urlTTL  = 4 * time.Hour
+	// Stream links expire after 7.5–8h (measured 2026-10: 5 links, direct and embed, all valid at 7h30m and
+	// "error_expired" at 8h); a rejected link is re-resolved anyway.
+	urlTTL  = 7 * time.Hour
 	failTTL = time.Hour
 	// A listing that shrinks by more than 10% is treated as an upstream glitch, so Jellyfin doesn't delete
 	// the missing titles. Only a shrink that persists this long is accepted.
