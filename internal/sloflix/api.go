@@ -61,8 +61,10 @@ var (
 	refreshTTL time.Duration
 	metaTTL    time.Duration
 	probeCache int // -probe-cache: max saved starts of new titles awaiting Jellyfin's probe (saveHead); 0 disables
-	username   string
-	password   string
+
+	limitMovies, limitShows int // -limit-movies, -limit-shows: only the newest titles (0 = all), for testing
+	username                string
+	password                string
 
 	apiClient = &http.Client{Timeout: 30 * time.Second}
 	cdnClient = &http.Client{Transport: cdnTransport()}
@@ -331,8 +333,12 @@ func catalog(typ int) ([]Item, error) {
 	})
 }
 
-// FirstN returns the first n items, or all if n is 0 (the -limit-* flags).
-func FirstN(items []Item, n int) []Item {
+// limit cuts a catalog of typ to its newest -limit-movies or -limit-shows titles, if set.
+func limit(typ int, items []Item) []Item {
+	n := limitMovies
+	if typ == 2 {
+		n = limitShows
+	}
 	if n > 0 {
 		return items[:min(n, len(items))]
 	}
@@ -352,9 +358,10 @@ func peek[T any](key string) (T, bool) {
 	return v, err == nil && json.Unmarshal(b, &v) == nil
 }
 
-// CachedCatalog returns the catalog of typ from the cache, however old, without fetching, so listing the
-// filesystem never waits on upstream. The crawler keeps it fresh. Likewise CachedShow and CachedEpisodes.
-func CachedCatalog(typ int) []Item { v, _ := peek[[]Item](catalogKey(typ)); return v }
+// CachedCatalog returns the catalog of typ (1 movies, 2 shows) from the cache, however old, without
+// fetching, so listing the filesystem never waits on upstream. The crawler keeps it fresh. Likewise
+// CachedShow and CachedEpisodes.
+func CachedCatalog(typ int) []Item { v, _ := peek[[]Item](catalogKey(typ)); return limit(typ, v) }
 
 // CachedShow returns a show's seasons and plot from the cache (see CachedCatalog).
 func CachedShow(showID int) ShowInfo { v, _ := peek[ShowInfo](showKey(showID)); return v }

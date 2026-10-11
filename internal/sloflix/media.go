@@ -14,7 +14,8 @@ import (
 )
 
 // Meta is what we persist per playable item: size for getattr, subtitle for listing the .vtt.
-// Size 0 means no playable source was found. Changed is when a re-resolve last saw Size or Sub differ.
+// Size 0 means no playable source was found. Changed is when the size or subtitle last changed, as seen by
+// a recheck, a stream's response (SetSize) or the crawler revalidating the subtitle; it bumps the mtime.
 type Meta struct {
 	Size    int64     `json:"size"`
 	Sub     string    `json:"sub"`

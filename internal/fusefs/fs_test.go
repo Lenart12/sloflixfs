@@ -49,13 +49,13 @@ func TestListing(t *testing.T) {
 		return out
 	}
 	checked := 0
-	if _, err := catalogDir(1, 0, func(int) bool { checked++; return true }, movieDir)(); err != nil || checked != 0 {
+	if _, err := catalogDir(1, func(int) bool { checked++; return true }, movieDir)(); err != nil || checked != 0 {
 		t.Fatalf("building the listing checked %d titles (err %v); Lookup must check only the one it finds", checked, err)
 	}
-	if got, want := names(catalogDir(1, 0, movieVisible, movieDir)), []string{"Four", "Five"}; !slices.Equal(got, want) {
+	if got, want := names(catalogDir(1, movieVisible, movieDir)), []string{"Four", "Five"}; !slices.Equal(got, want) {
 		t.Fatalf("movies %v, want %v", got, want)
 	}
-	if got, want := names(catalogDir(2, 0, showVisible, showDir)), []string{"Show"}; !slices.Equal(got, want) {
+	if got, want := names(catalogDir(2, showVisible, showDir)), []string{"Show"}; !slices.Equal(got, want) {
 		t.Fatalf("shows %v, want %v", got, want)
 	}
 	if got := names(showDir(sloflix.Item{ID: 10}, "Show")); !slices.Contains(got, "Season 01") || slices.Contains(got, "Season 02") {

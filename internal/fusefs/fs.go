@@ -145,6 +145,14 @@ func (v *video) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, 
 	return s, 0, 0
 }
 
+// memFile is a read-only file served from memory.
+func memFile(b []byte, mtime time.Time) *fs.MemRegularFile {
+	f := &fs.MemRegularFile{Data: b}
+	f.Attr.Mode = 0444
+	f.Attr.SetTimes(nil, &mtime, &mtime)
+	return f
+}
+
 // mtimeOf bumps an item's mtime when its source or subtitle changed, so Jellyfin re-probes it.
 func mtimeOf(created time.Time, m sloflix.Meta) time.Time {
 	if m.Changed.After(created) {
@@ -159,10 +167,7 @@ func subtitleNode(loc string, mtime time.Time) func() (fs.InodeEmbedder, error) 
 		if err != nil {
 			return nil, err
 		}
-		f := &fs.MemRegularFile{Data: b}
-		f.Attr.Mode = 0444
-		f.Attr.SetTimes(nil, &mtime, &mtime)
-		return f, nil
+		return memFile(b, mtime), nil
 	}
 }
 
@@ -244,14 +249,14 @@ func dirChild(name string, mtime time.Time, list func() ([]child, error)) child 
 	return child{name: name, dir: true, node: func() (fs.InodeEmbedder, error) { return &dir{mtime: mtime, list: list}, nil }}
 }
 
-// catalogDir lists the catalog of typ, newest first, capped at limit entries if limit > 0. Only titles that
-// pass visible are listed; they're checked lazily (see child.visible).
-func catalogDir(typ, limit int, visible func(id int) bool, itemDir func(it sloflix.Item, name string) func() ([]child, error)) func() ([]child, error) {
+// catalogDir lists the catalog of typ, newest first. Only titles that pass visible are listed; they're
+// checked lazily (see child.visible).
+func catalogDir(typ int, visible func(id int) bool, itemDir func(it sloflix.Item, name string) func() ([]child, error)) func() ([]child, error) {
 	return func() ([]child, error) {
 		items := sloflix.CachedCatalog(typ)
 		names := uniqNames(items, title, visible)
 		var out []child
-		for _, it := range sloflix.FirstN(items, limit) {
+		for _, it := range items {
 			name := names[it.ID]
 			c := dirChild(name, it.CreatedAt(), itemDir(it, name))
 			c.visible = func() bool { return visible(it.ID) }
@@ -321,11 +326,11 @@ func seasonDir(showID, season int, showName string) func() ([]child, error) {
 	}
 }
 
-func NewRoot(limitMovies, limitShows int) *dir {
+func NewRoot() *dir {
 	return &dir{mtime: startTime, list: func() ([]child, error) {
 		return []child{
-			dirChild("Movies", startTime, catalogDir(1, limitMovies, movieVisible, movieDir)),
-			dirChild("Shows", startTime, catalogDir(2, limitShows, showVisible, showDir)),
+			dirChild("Movies", startTime, catalogDir(1, movieVisible, movieDir)),
+			dirChild("Shows", startTime, catalogDir(2, showVisible, showDir)),
 		}, nil
 	}}
 }

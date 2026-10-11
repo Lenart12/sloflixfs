@@ -21,12 +21,15 @@ type Config struct {
 	JellyfinURL        string // if set, scan the libraries under JellyfinPath when new titles are verified
 	JellyfinKey        string
 	JellyfinPath       string // the mount as Jellyfin sees it
+	// LimitMovies and LimitShows, if > 0, list and crawl only the newest titles, for testing.
+	LimitMovies, LimitShows int
 }
 
 // Start applies cfg, creates the cache directories and starts the API rate limiter. It doesn't log in.
 func Start(cfg Config) error {
 	cacheDir, refreshTTL, metaTTL, probeCache = cfg.CacheDir, cfg.Refresh, cfg.Revalidate, cfg.ProbeCache
 	username, password = cfg.Username, cfg.Password
+	limitMovies, limitShows = cfg.LimitMovies, cfg.LimitShows
 	jfURL, jfKey, jfPath = cfg.JellyfinURL, cfg.JellyfinKey, cfg.JellyfinPath
 	slots = make(chan struct{}, cfg.Concurrency)
 	go throttleLoop(time.Duration(float64(time.Second)/cfg.Rate), hiQ, loQ)
@@ -49,6 +52,3 @@ func Login() error {
 	_, err := login(false)
 	return err
 }
-
-// Crawl runs the crawler forever. limitMovies and limitShows, if > 0, limit it to the newest titles.
-func Crawl(limitMovies, limitShows int) { crawler(limitMovies, limitShows) }

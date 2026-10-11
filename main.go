@@ -30,8 +30,8 @@ func main() {
 	flag.IntVar(&cfg.ProbeCache, "probe-cache", 500, "max new titles whose start is saved for Jellyfin's first probe, about 10-16 MB each until probed (0 = off)")
 	flag.Float64Var(&cfg.Rate, "rate", 1, "max API requests per second")
 	flag.IntVar(&cfg.Concurrency, "concurrency", 3, "max upstream lookups/fetches in flight (playback is exempt)")
-	limitMovies := flag.Int("limit-movies", 0, "list only the newest N movies (0 = all), for testing")
-	limitShows := flag.Int("limit-shows", 0, "list only the newest N shows (0 = all), for testing")
+	flag.IntVar(&cfg.LimitMovies, "limit-movies", 0, "list only the newest N movies (0 = all), for testing")
+	flag.IntVar(&cfg.LimitShows, "limit-shows", 0, "list only the newest N shows (0 = all), for testing")
 	allowOther := flag.Bool("allow-other", false, "let other users (e.g. Jellyfin in Docker) access the mount")
 	flag.StringVar(&cfg.Username, "user", "", "sloflix username")
 	flag.StringVar(&cfg.Password, "pass", "", "sloflix password; prefer the environment variable, since other users can see arguments")
@@ -45,11 +45,11 @@ func main() {
 	if *mount == "" || cfg.Username == "" || cfg.Password == "" {
 		log.Fatal("usage: sloflixfs -mount DIR, with credentials in SLOFLIX_USER and SLOFLIX_PASS (or -user, -pass); -h lists all options")
 	}
-	if cfg.JellyfinURL != "" && cfg.JellyfinKey == "" {
-		log.Fatal("-jellyfin-url needs -jellyfin-key")
+	if (cfg.JellyfinURL == "") != (cfg.JellyfinKey == "") {
+		log.Fatal("-jellyfin-url and -jellyfin-key go together")
 	}
-	if cfg.Rate <= 0 || cfg.Concurrency <= 0 {
-		log.Fatal("-rate and -concurrency must be positive")
+	if cfg.Rate <= 0 || cfg.Concurrency <= 0 || cfg.Refresh <= 0 || cfg.Revalidate <= 0 {
+		log.Fatal("-rate, -concurrency, -refresh and -revalidate must be positive")
 	}
 	if err := sloflix.Start(cfg); err != nil {
 		log.Fatal(err)
@@ -66,7 +66,7 @@ func main() {
 		log.Fatal(err)
 	}
 	timeout := time.Hour
-	server, err := fs.Mount(*mount, fusefs.NewRoot(*limitMovies, *limitShows), &fs.Options{
+	server, err := fs.Mount(*mount, fusefs.NewRoot(), &fs.Options{
 		EntryTimeout: &timeout,
 		AttrTimeout:  &timeout,
 		MountOptions: fuse.MountOptions{
@@ -84,7 +84,7 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("mounted on %s", *mount)
-	go sloflix.Crawl(*limitMovies, *limitShows)
+	go sloflix.Crawl()
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	go func() {

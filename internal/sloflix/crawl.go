@@ -63,15 +63,15 @@ func due(id int) (bucket int, written time.Time, ok bool) {
 	}
 }
 
-// crawler checks titles in the background, so listings only show playable titles and never wait on
+// Crawl checks titles in the background, forever, so listings only show playable titles and never wait on
 // upstream: new titles first (newest first), then rechecks (see due), oldest first. This also catches
 // changed or removed sources and subtitles added or edited upstream for titles nobody plays. The rate
 // limits pace it; DoodStream's leaves a reserve for playback (doodTake). Workers beyond -concurrency (which
 // still caps requests in flight) can wait for DoodStream without holding up titles that don't need it.
-func crawler(limitMovies, limitShows int) {
+func Crawl() {
 	for {
 		go saveHeads()
-		queue := crawlQueue(limitMovies, limitShows)
+		queue := crawlQueue()
 		saveFailed()      // the previous round's failures
 		go jellyfinScan() // at most hourly, and only after titles were newly listed
 		// Rebuild at most every 10 minutes, so newly listed titles don't wait behind a long recheck queue.
@@ -99,7 +99,7 @@ func crawler(limitMovies, limitShows int) {
 
 // crawlQueue walks the catalog (the only place its listings are refreshed; readdir serves them cached) and
 // returns the titles due for a check, in order.
-func crawlQueue(limitMovies, limitShows int) []int {
+func crawlQueue() []int {
 	type task struct {
 		id, bucket int
 		at         time.Time
@@ -117,7 +117,7 @@ func crawlQueue(limitMovies, limitShows int) []int {
 	if err != nil {
 		log.Printf("crawl: %v", err)
 	}
-	for _, it := range FirstN(movies, limitMovies) {
+	for _, it := range limit(1, movies) {
 		add(it.ID, it.CreatedAt())
 	}
 	shows, err := catalog(2)
@@ -128,7 +128,7 @@ func crawlQueue(limitMovies, limitShows int) []int {
 	// rest come from the cache (or wait, if never fetched) until a later rebuild. So with an empty cache, or
 	// when many expire at once, titles are checked between batches of the ~1500 listings, not after all.
 	deadline := time.Now().Add(listingBudget)
-	for _, show := range FirstN(shows, limitShows) {
+	for _, show := range limit(2, shows) {
 		si, err := CachedShow(show.ID), error(nil)
 		if time.Now().Before(deadline) {
 			si, err = showMeta(show.ID)

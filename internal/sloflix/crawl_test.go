@@ -68,17 +68,20 @@ func TestCrawlQueue(t *testing.T) {
 	}()
 	apiBase, token = "http://127.0.0.1:1", "test" // the fetch fails fast; the crawler goes on
 
-	if got, want := crawlQueue(0, 0), []int{2, 1, 12, 21, 3, 4}; !slices.Equal(got, want) {
+	if got, want := crawlQueue(), []int{2, 1, 12, 21, 3, 4}; !slices.Equal(got, want) {
 		t.Fatalf("queue %v, want %v", got, want)
 	}
-	if got, want := crawlQueue(1, 0), []int{1, 12, 21}; !slices.Equal(got, want) {
+	limitMovies = 1
+	got := crawlQueue()
+	limitMovies = 0
+	if want := []int{1, 12, 21}; !slices.Equal(got, want) {
 		t.Fatalf("queue with -limit-movies 1: %v, want %v", got, want)
 	}
 	// Past the listing budget, listings come from the cache only.
 	defer func(b time.Duration) { listingBudget = b }(listingBudget)
 	listingBudget = 0
 	fetches.Store(0)
-	if got, want := crawlQueue(0, 0), []int{2, 1, 12, 21, 3, 4}; !slices.Equal(got, want) || fetches.Load() != 0 {
+	if got, want := crawlQueue(), []int{2, 1, 12, 21, 3, 4}; !slices.Equal(got, want) || fetches.Load() != 0 {
 		t.Fatalf("queue %v with %d fetches, want %v with none", got, fetches.Load(), want)
 	}
 }

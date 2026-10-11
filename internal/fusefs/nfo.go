@@ -27,10 +27,7 @@ func dataImage(uri, base string, mtime time.Time) (child, bool) {
 		return child{}, false
 	}
 	return child{name: base + "." + strings.Replace(typ, "jpeg", "jpg", 1), node: func() (fs.InodeEmbedder, error) {
-		f := &fs.MemRegularFile{Data: b}
-		f.Attr.Mode = 0444
-		f.Attr.SetTimes(nil, &mtime, &mtime)
-		return f, nil
+		return memFile(b, mtime), nil
 	}}, true
 }
 
@@ -73,9 +70,6 @@ func nfoChild(file, root string, it sloflix.Item, plot string, mtime time.Time) 
 		if err != nil {
 			return nil, err
 		}
-		f := &fs.MemRegularFile{Data: append([]byte(xml.Header), b...)}
-		f.Attr.Mode = 0444
-		f.Attr.SetTimes(nil, &mtime, &mtime)
-		return f, nil
+		return memFile(append([]byte(xml.Header), b...), mtime), nil
 	}})
 }
