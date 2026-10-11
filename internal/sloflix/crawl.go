@@ -1,7 +1,10 @@
 package sloflix
 
 import (
+	"encoding/json"
+	"errors"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,8 +13,30 @@ import (
 )
 
 type crawlFail struct {
-	next time.Time     // no retry before this
-	wait time.Duration // failTTL, doubled with each failure in a row up to crawlMaxWait
+	Next time.Time     // no retry before this
+	Wait time.Duration // failTTL, doubled with each failure in a row up to crawlMaxWait
+}
+
+// listingBudget is how long a queue rebuild spends fetching show listings (see crawlQueue). A var for tests.
+var listingBudget = 5 * time.Minute
+
+// failedFile keeps crawlFailed across restarts, so titles on dead video servers aren't all retried at once.
+func failedFile() string { return filepath.Join(cacheDir, "failed.json") }
+
+func loadFailed() {
+	b, _ := os.ReadFile(failedFile())
+	lookupMu.Lock()
+	json.Unmarshal(b, &crawlFailed)
+	lookupMu.Unlock()
+}
+
+// saveFailed writes crawlFailed, dropping titles not retried long after they were due: gone from the catalog.
+func saveFailed() {
+	lookupMu.Lock()
+	maps.DeleteFunc(crawlFailed, func(_ int, f crawlFail) bool { return time.Since(f.Next) > crawlMaxWait })
+	b, _ := json.Marshal(crawlFailed)
+	lookupMu.Unlock()
+	writeFile(failedFile(), b)
 }
 
 // due reports whether the crawler should check id now, and in which order: bucket 0 is never checked,
@@ -19,7 +44,7 @@ type crawlFail struct {
 // (rechecked after metaTTL). written is when its meta was last written.
 func due(id int) (bucket int, written time.Time, ok bool) {
 	lookupMu.Lock()
-	recent := time.Now().Before(crawlFailed[id].next)
+	recent := time.Now().Before(crawlFailed[id].Next)
 	lookupMu.Unlock()
 	if recent {
 		return 0, time.Time{}, false
@@ -42,6 +67,7 @@ func due(id int) (bucket int, written time.Time, ok bool) {
 // still caps requests in flight) can wait for DoodStream without holding up titles that don't need it.
 func crawler(limitMovies, limitShows int) {
 	for {
+		go saveHeads()
 		queue := crawlQueue(limitMovies, limitShows)
 		// Rebuild at most every 10 minutes, so newly listed titles don't wait behind a long recheck queue.
 		next := time.Now().Add(10 * time.Minute)
@@ -93,16 +119,25 @@ func crawlQueue(limitMovies, limitShows int) []int {
 	if err != nil {
 		log.Printf("crawl: %v", err)
 	}
+	// Show and season listings are fetched for at most listingBudget per rebuild, newest shows first; the
+	// rest come from the cache (or wait, if never fetched) until a later rebuild. So with an empty cache, or
+	// when many expire at once, titles are checked between batches of the ~1500 listings, not after all.
+	deadline := time.Now().Add(listingBudget)
 	for _, show := range FirstN(shows, limitShows) {
-		si, err := showMeta(show.ID)
+		si, err := CachedShow(show.ID), error(nil)
+		if time.Now().Before(deadline) {
+			si, err = showMeta(show.ID)
+		}
 		if err != nil {
 			log.Printf("crawl: show %d: %v", show.ID, err)
 			continue
 		}
 		for _, s := range si.Seasons {
-			eps, err := episodes(show.ID, s)
-			if err != nil {
-				log.Printf("crawl: show %d season %d: %v", show.ID, s, err)
+			eps := CachedEpisodes(show.ID, s)
+			if time.Now().Before(deadline) {
+				if eps, err = episodes(show.ID, s); err != nil {
+					log.Printf("crawl: show %d season %d: %v", show.ID, s, err)
+				}
 			}
 			for _, ep := range eps {
 				add(ep.ID, ep.CreatedAt())
@@ -134,6 +169,7 @@ func crawlQueue(limitMovies, limitShows int) []int {
 	if len(ids) > 0 {
 		log.Printf("crawl: %d new, %d to recheck; %d of %d probe cache slots used", fresh, len(ids)-fresh, headCount(), probeCache)
 	}
+	saveFailed()      // the previous round's failures
 	go jellyfinScan() // at most hourly, and only after titles were newly listed
 	return ids
 }
@@ -152,10 +188,14 @@ func crawl(id int) {
 	}
 	lookupMu.Lock()
 	if err != nil {
-		// Transient errors aren't persisted, so back off here: a dead video server can stay dead for days.
-		f := crawlFailed[id]
-		f.wait = min(max(2*f.wait, failTTL), crawlMaxWait)
-		f.next = time.Now().Add(f.wait)
+		// Back off titles that keep failing on their own (a dead video server can stay dead for days, a
+		// missing source rarely comes back); after a shared failure just retry in failTTL.
+		f, wait := crawlFailed[id], failTTL
+		if !errors.As(err, new(sharedErr)) {
+			f.Wait = min(max(2*f.Wait, failTTL), crawlMaxWait)
+			wait = f.Wait
+		}
+		f.Next = time.Now().Add(wait)
 		crawlFailed[id] = f
 	} else {
 		delete(crawlFailed, id)

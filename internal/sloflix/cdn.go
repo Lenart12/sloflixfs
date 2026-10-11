@@ -184,10 +184,41 @@ const (
 	headSlack = 7 << 20
 	headMax   = 64 << 20 // an index this far in means it isn't a sane MP4 start
 	headTTL   = 3 * 24 * time.Hour
+	headLead  = time.Hour // how long before urlTTL saveHeads saves a head; above the crawler's rebuild interval
 )
 
 // HeadFile is where a title's probe head is saved (see saveHead).
 func HeadFile(id int) string { return filepath.Join(cacheDir, "heads", fmt.Sprint(id)) }
+
+// WantFile marks a new title Jellyfin hasn't probed yet (see saveHeads). Closing the file removes it.
+func WantFile(id int) string { return filepath.Join(cacheDir, "want", fmt.Sprint(id)) }
+
+var headBusy sync.Mutex // one saveHeads at a time
+
+// saveHeads saves the start of new titles Jellyfin hasn't probed while their stream link is about to
+// expire. Until then a probe uses the link; after, it would need a new lookup (for an embed-only title a
+// DoodStream one, which a scan probing many titles runs out of).
+func saveHeads() {
+	if !headBusy.TryLock() {
+		return
+	}
+	defer headBusy.Unlock()
+	want, _ := os.ReadDir(filepath.Join(cacheDir, "want"))
+	for _, e := range want {
+		id, _ := strconv.Atoi(e.Name())
+		m, _, _ := readMeta(id)
+		age := time.Since(m.URLAt)
+		if m.URL != "" && age < urlTTL-headLead {
+			continue
+		}
+		if m.URL != "" && age < urlTTL && headCount() < probeCache {
+			if _, err := probeSize(m.URL, id); err != nil {
+				log.Printf("media %d: no probe cache: %v", id, err)
+			}
+		}
+		os.Remove(WantFile(id))
+	}
+}
 
 // headCount is the number of saved heads, bounded by -probe-cache so they can't fill the disk before
 // Jellyfin's next scan probes (and removes) them.

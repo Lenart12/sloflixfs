@@ -27,7 +27,7 @@ const (
 	referer   = "https://player.sloflix.com/"
 	// Stream links expire after 7.5–8h (measured 2026-10: 5 links, direct and embed, all valid at 7h30m and
 	// "error_expired" at 8h); a rejected link is re-resolved anyway.
-	urlTTL  = 7 * time.Hour
+	urlTTL  = 7*time.Hour + 30*time.Minute
 	failTTL = time.Hour
 	// A title the crawler keeps failing on (mostly dead CDN servers) waits failTTL, doubling with each
 	// failure in a row up to this.
@@ -67,9 +67,6 @@ var (
 
 	memMu sync.Mutex
 	mem   = map[string]memEntry{}
-
-	urlMu sync.Mutex
-	urls  = map[int]urlEntry{}
 
 	// fetchMu holds one lock per listing key, so concurrent requests for a listing share one fetch while
 	// other listings (and their disk reads) don't wait behind it.

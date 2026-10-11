@@ -13,12 +13,6 @@ import (
 	"time"
 )
 
-type urlEntry struct {
-	url  string
-	size int64
-	at   time.Time
-}
-
 // Meta is what we persist per playable item: size for getattr, subtitle for listing the .vtt.
 // Size 0 means no playable source was found. Changed is when a re-resolve last saw Size or Sub differ.
 type Meta struct {
@@ -30,9 +24,18 @@ type Meta struct {
 	// DeadCode is a DoodStream ID reported deleted. IDs aren't reused, so while sloflix keeps returning it,
 	// rechecks of a hidden title skip DoodStream.
 	DeadCode string `json:"dead_code,omitempty"`
+	// URL is the last stream link and URLAt when it was resolved, used for urlTTL, also after a restart.
+	URL   string    `json:"url,omitempty"`
+	URLAt time.Time `json:"url_at,omitzero"`
 }
 
-// resolve fetches a fresh stream URL for id, records its size and subtitle in meta, and memoizes the URL.
+// sharedErr is a failure of sloflix's API or DoodStream (down, a captcha, the lookup limit), which every
+// title shares: unlike a dead video server or a missing source, it's no reason to check a title less often.
+type sharedErr struct{ error }
+
+func (e sharedErr) Unwrap() error { return e.error }
+
+// resolve fetches a fresh stream URL for id and records it, its size and subtitle in meta.
 func resolve(id int, hi bool) (string, Meta, error) {
 	release := acquire(hi)
 	defer func() { release() }()
@@ -45,7 +48,7 @@ func resolve(id int, hi bool) (string, Meta, error) {
 		} `json:"media_sources"`
 	}
 	if err := api(fmt.Sprintf("/media/single/%d?dont_count_view=true", id), &d, hi); err != nil {
-		return "", Meta{}, err
+		return "", Meta{}, sharedErr{err}
 	}
 	m := Meta{Plot: d.Plot}
 	// Prefer sloflix's own direct link; otherwise extract one from a DoodStream embed.
@@ -86,7 +89,7 @@ func resolve(id int, hi bool) (string, Meta, error) {
 		}
 		if err != nil {
 			if !errors.Is(err, errVideoGone) {
-				return "", Meta{}, err
+				return "", Meta{}, sharedErr{err}
 			}
 			missing = fmt.Errorf("DoodStream %s: %w", doodCode, err)
 			m.DeadCode = doodCode
@@ -100,11 +103,7 @@ func resolve(id int, hi bool) (string, Meta, error) {
 		m.Size = prev.Size
 	} else if stream != "" {
 		start := time.Now()
-		headID := 0
-		if !hi && prev.Size == 0 && headCount() < probeCache { // a new title: save its start for Jellyfin's probe
-			headID = id
-		}
-		size, err := probeSize(stream, headID)
+		size, err := probeSize(stream, 0)
 		if err == nil {
 			u, _ := url.Parse(stream)
 			log.Printf("cdn: probe %d %s %v", id, u.Host, time.Since(start).Round(time.Millisecond))
@@ -153,13 +152,16 @@ func resolve(id int, hi bool) (string, Meta, error) {
 			os.Remove(HeadFile(id)) // it's from the old file
 		}
 	}
+	if noSource == nil {
+		m.URL, m.URLAt = stream, time.Now()
+	}
 	writeMeta(id, m)
 	if noSource != nil {
 		return "", m, noSource
 	}
-	urlMu.Lock()
-	urls[id] = urlEntry{stream, m.Size, time.Now()}
-	urlMu.Unlock()
+	if !hi && prev.Size == 0 && probeCache > 0 { // a new title: Jellyfin will probe it (see saveHeads)
+		writeFile(WantFile(id), nil)
+	}
 	return stream, m, nil
 }
 
@@ -200,22 +202,13 @@ func SetSize(id int, size int64) {
 	m.Size, m.Changed = size, time.Now()
 	writeMeta(id, m)
 	os.Remove(HeadFile(id)) // it's from the old file
-	urlMu.Lock()
-	if e, ok := urls[id]; ok {
-		e.size = size
-		urls[id] = e
-	}
-	urlMu.Unlock()
 }
 
-// StreamURL returns a memoized stream URL and its size, or fresh ones if force is set or it is older than urlTTL.
+// StreamURL returns the stream URL in meta and its size, or fresh ones if force is set or it is older than urlTTL.
 // Resolving also refreshes the item's persisted meta, so opening a file revalidates its size and subtitle.
 func StreamURL(id int, force bool) (string, int64, error) {
-	urlMu.Lock()
-	e, ok := urls[id]
-	urlMu.Unlock()
-	if ok && !force && time.Since(e.at) < urlTTL {
-		return e.url, e.size, nil
+	if m, _, _ := readMeta(id); !force && m.URL != "" && time.Since(m.URLAt) < urlTTL {
+		return m.URL, m.Size, nil
 	}
 	lookupMu.Lock()
 	recent := !force && time.Since(failed[id]) < playFailTTL

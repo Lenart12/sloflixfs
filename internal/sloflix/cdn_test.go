@@ -110,6 +110,28 @@ func TestSaveHead(t *testing.T) {
 	if left, _ := os.ReadDir(filepath.Join(cacheDir, "heads")); len(left) != 1 {
 		t.Fatalf("heads dir has %d files, want 1 (no temp files left)", len(left))
 	}
+
+	// saveHeads saves a head only for an unprobed new title whose link is about to expire; until then the
+	// link in meta serves it, also after a restart.
+	os.MkdirAll(filepath.Join(cacheDir, "want"), 0755)
+	os.MkdirAll(filepath.Join(cacheDir, "meta"), 0755)
+	defer func(n int) { probeCache = n }(probeCache)
+	probeCache = 10
+	for id, age := range map[int]time.Duration{4: urlTTL - headLead/2, 5: time.Hour, 6: urlTTL + time.Minute} {
+		writeMeta(id, Meta{Size: int64(len(files["/start"])), URL: srv.URL + "/start", URLAt: time.Now().Add(-age)})
+		writeFile(WantFile(id), nil)
+	}
+	saveHeads()
+	for id, want := range map[int][2]bool{4: {true, false}, 5: {false, true}, 6: {false, false}} {
+		_, headErr := os.Stat(HeadFile(id))
+		_, wantErr := os.Stat(WantFile(id))
+		if got := [2]bool{headErr == nil, wantErr == nil}; got != want {
+			t.Fatalf("title %d: head, marker %v, want %v", id, got, want)
+		}
+	}
+	if u, size, err := StreamURL(5, false); err != nil || u != srv.URL+"/start" || size != int64(len(files["/start"])) {
+		t.Fatalf("StreamURL from meta: %q %d %v", u, size, err)
+	}
 }
 
 func TestReachable(t *testing.T) {

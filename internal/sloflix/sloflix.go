@@ -33,11 +33,12 @@ func Start(cfg Config) error {
 	// A previous run (just restarted) may have used DoodStream's limit: count the crawler's share as used,
 	// so it waits a window while playback keeps its reserve.
 	doodSent = slices.Repeat([]time.Time{time.Now()}, doodMax-doodReserve)
-	for _, d := range []string{"json", "meta", "subs", "heads"} {
+	for _, d := range []string{"json", "meta", "subs", "heads", "want"} {
 		if err := os.MkdirAll(filepath.Join(cacheDir, d), 0755); err != nil {
 			return err
 		}
 	}
+	loadFailed()
 	return nil
 }
 
