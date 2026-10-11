@@ -44,6 +44,7 @@ func TestVerifyCert(t *testing.T) {
 		ok           bool
 	}{
 		{"valid", "a.example.com", leaf("a.example.com", valid, ca, key), true},
+		{"IP address (no SNI name)", "", leaf("a.example.com", valid, ca, key), false},
 		{"expired, other domain", "a.example.com", leaf("a.example.com", expired, ca, key), false},
 		{"expired cdn", "x1.cloudatacdn.com", leaf("*.cloudatacdn.com", expired, ca, key), true},
 		{"expired cdn, wrong name", "x1.cloudatacdn.com", leaf("y.example.com", expired, ca, key), false},

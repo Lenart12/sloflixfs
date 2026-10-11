@@ -50,6 +50,11 @@ func verifyCert(cs tls.ConnectionState, roots *x509.CertPool) error {
 	if len(cs.PeerCertificates) == 0 {
 		return errors.New("tls: no server certificate")
 	}
+	// ServerName is the SNI name, empty for an IP address, and an empty DNSName skips the hostname check.
+	// Video servers have names, so refuse rather than accept any trusted certificate.
+	if cs.ServerName == "" {
+		return errors.New("tls: no server name to verify (an IP address?)")
+	}
 	leaf := cs.PeerCertificates[0]
 	opts := x509.VerifyOptions{DNSName: cs.ServerName, Roots: roots, Intermediates: x509.NewCertPool()}
 	for _, c := range cs.PeerCertificates[1:] {
