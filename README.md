@@ -116,7 +116,7 @@ The binary is installed to `$(go env GOPATH)/bin`. To let another user read the 
 
    Otherwise use `Movies` and `Shows` under the mount as Jellyfin sees it.
 
-2. In each library's settings, turn off **Trickplay image extraction**, **Chapter image extraction** and **Real-time monitoring**. The first two read whole files from upstream; the third doesn't work on FUSE.
+2. In each library's settings, turn off **Trickplay image extraction**, **Chapter image extraction** and **Real-time monitoring**. The first two read whole files from upstream; the third doesn't work on FUSE. For the same reason, turn off or exclude these libraries from plugins that analyze file contents, such as **Intro Skipper**.
 
 3. Optionally, let sloflixfs start library scans when new titles are ready: create an API key in Jellyfin (Dashboard → API Keys) and set `SLOFLIX_JELLYFIN_URL` and `SLOFLIX_JELLYFIN_KEY` (see [Jellyfin scans](#jellyfin-scans)).
 
