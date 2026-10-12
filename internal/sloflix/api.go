@@ -70,7 +70,7 @@ type ShowInfo struct {
 
 // login returns the API token: cached in memory or on disk, or from logging in. A failed login is
 // remembered for loginRetry, so wrong credentials don't send a login request with every API call.
-func login(hi bool) (_ string, err error) {
+func login(p priority) (_ string, err error) {
 	tokenMu.Lock()
 	defer tokenMu.Unlock()
 	if token != "" {
@@ -84,7 +84,7 @@ func login(hi bool) (_ string, err error) {
 		return "", loginErr
 	}
 	defer func() { loginErr, loginAt = err, time.Now() }()
-	wait(hi)
+	wait(p)
 	log.Printf("api: login")
 	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
 	req, err := web.NewRequest(context.Background(), "POST", apiBase+"/user/login", bytes.NewReader(body))
@@ -125,14 +125,14 @@ func doJSON(req *http.Request, out any) error {
 }
 
 // api GETs path and decodes the response's "data" into out. It re-logs in once on auth errors.
-// hi requests (playback) jump the rate-limit queue.
-func api(path string, out any, hi bool) error {
+// Playback requests jump the rate-limit queue.
+func api(path string, out any, p priority) error {
 	for attempt := 0; ; attempt++ {
-		tok, err := login(hi)
+		tok, err := login(p)
 		if err != nil {
 			return err
 		}
-		wait(hi)
+		wait(p)
 		log.Printf("api: GET %s", path)
 		req, err := web.NewRequest(context.Background(), "GET", apiBase+path, nil)
 		if err != nil {

@@ -120,14 +120,14 @@ func crawlQueue() []int {
 			tasks = append(tasks, task{id, bucket, written})
 		}
 	}
-	movies, err := catalog(1)
+	movies, err := catalog(Movies)
 	if err != nil {
 		log.Printf("crawl: %v", err)
 	}
-	for _, it := range limit(1, movies) {
+	for _, it := range limit(Movies, movies) {
 		add(it.ID, it.CreatedAt())
 	}
-	shows, err := catalog(2)
+	shows, err := catalog(Shows)
 	if err != nil {
 		log.Printf("crawl: %v", err)
 	}
@@ -135,7 +135,7 @@ func crawlQueue() []int {
 	// rest come from the cache (or wait, if never fetched) until a later rebuild. So with an empty cache, or
 	// when many expire at once, titles are checked between batches of the ~1500 listings, not after all.
 	deadline := time.Now().Add(listingBudget)
-	for _, show := range limit(2, shows) {
+	for _, show := range limit(Shows, shows) {
 		si, err := CachedShow(show.ID), error(nil)
 		if time.Now().Before(deadline) {
 			si, err = showMeta(show.ID)
@@ -210,7 +210,7 @@ func crawl(id int) {
 		return
 	}
 	_, wasListed := Info(id)
-	_, m, err := resolve(id, false)
+	_, m, err := resolve(id, background)
 	if err == nil && !wasListed { // resolve succeeds only for a playable title: it's newly listed
 		newlyListed()
 	}

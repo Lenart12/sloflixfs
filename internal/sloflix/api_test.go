@@ -50,13 +50,13 @@ func TestLogin(t *testing.T) {
 	}()
 
 	var v int
-	if err := api("/x", &v, false); err != nil || v != 42 || logins.Load() != 1 {
+	if err := api("/x", &v, background); err != nil || v != 42 || logins.Load() != 1 {
 		t.Fatalf("expired token: v=%d err=%v logins=%d", v, err, logins.Load())
 	}
 	token, cacheDir = "", t.TempDir() // no token anywhere
 	reject.Store(true)
 	for range 3 {
-		if err := api("/x", &v, false); err == nil {
+		if err := api("/x", &v, background); err == nil {
 			t.Fatal("api succeeded without a token")
 		}
 	}
@@ -98,12 +98,12 @@ func TestCatalogPaging(t *testing.T) {
 			}
 		}
 	}()
-	if items, err := catalog(1); err != nil || len(items) != 301 || items[300].ID != 300 {
+	if items, err := catalog(Movies); err != nil || len(items) != 301 || items[300].ID != 300 {
 		t.Fatalf("catalog: %d items, err %v", len(items), err)
 	}
 	endless.Store(true)
 	pages.Store(0)
-	if _, err := catalog(2); err == nil || pages.Load() != maxPages {
+	if _, err := catalog(Shows); err == nil || pages.Load() != maxPages {
 		t.Fatalf("endless catalog: err %v after %d pages", err, pages.Load())
 	}
 }

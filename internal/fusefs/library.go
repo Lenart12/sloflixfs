@@ -15,17 +15,17 @@ var startTime = time.Now()
 func NewRoot() *dir {
 	return &dir{mtime: startTime, list: func() ([]child, error) {
 		return []child{
-			dirChild("Movies", startTime, catalogDir(1, movieVisible, movieDir)),
-			dirChild("Shows", startTime, catalogDir(2, showVisible, showDir)),
+			dirChild("Movies", startTime, catalogDir(sloflix.Movies, movieVisible, movieDir)),
+			dirChild("Shows", startTime, catalogDir(sloflix.Shows, showVisible, showDir)),
 		}, nil
 	}}
 }
 
-// catalogDir lists the catalog of typ, newest first. Only titles that pass visible are listed; they're
+// catalogDir lists the catalog of kind, newest first. Only titles that pass visible are listed; they're
 // checked lazily (see child.visible).
-func catalogDir(typ int, visible func(id int) bool, itemDir func(it sloflix.Item, name string) func() ([]child, error)) func() ([]child, error) {
+func catalogDir(kind sloflix.Kind, visible func(id int) bool, itemDir func(it sloflix.Item, name string) func() ([]child, error)) func() ([]child, error) {
 	return func() ([]child, error) {
-		items := sloflix.CachedCatalog(typ)
+		items := sloflix.CachedCatalog(kind)
 		names := uniqNames(items, title, visible)
 		var out []child
 		for _, it := range items {

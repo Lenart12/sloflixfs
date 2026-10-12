@@ -59,7 +59,7 @@ func Start(cfg Config) error {
 // Login logs in (or loads the cached token) once, so bad credentials fail at startup instead of on every
 // filesystem operation.
 func Login() error {
-	_, err := login(false)
+	_, err := login(background)
 	return err
 }
 

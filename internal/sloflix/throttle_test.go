@@ -21,7 +21,7 @@ func TestThrottleSpacing(t *testing.T) {
 	prev := time.Now()
 	<-lo
 	for i := range 3 {
-		take(i == 1, hi, lo)
+		take(priority(i == 1), hi, lo)
 		if gap := time.Since(prev); gap < 45*time.Millisecond {
 			t.Fatalf("slot %d only %v after the previous one", i+2, gap)
 		}
@@ -34,10 +34,10 @@ func TestThrottlePrefersHi(t *testing.T) {
 	go throttleLoop(20*time.Millisecond, hi, lo)
 	done := make(chan string, 6)
 	for range 5 {
-		go func() { take(false, hi, lo); done <- "lo" }()
+		go func() { take(background, hi, lo); done <- "lo" }()
 	}
 	time.Sleep(5 * time.Millisecond)
-	go func() { take(true, hi, lo); done <- "hi" }()
+	go func() { take(playback, hi, lo); done <- "hi" }()
 	for i := range 6 {
 		if <-done == "hi" {
 			if i > 1 {

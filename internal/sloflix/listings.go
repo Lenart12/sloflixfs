@@ -65,7 +65,7 @@ func cached[T any](key string, fetch func() (T, error)) (T, error) {
 			}
 		}
 	}
-	release := acquire(false)
+	release := acquire(background)
 	v, err := fetch()
 	release()
 	memMu.Lock()
@@ -115,31 +115,41 @@ func entries(v any) int {
 	return 0
 }
 
-// catalog lists all movies (typ 1) or shows (typ 2).
-func catalog(typ int) ([]Item, error) {
-	return cached(catalogKey(typ), func() ([]Item, error) {
+// Kind is a catalog's media type, as the API numbers it.
+type Kind int
+
+const (
+	Movies Kind = 1
+	Shows  Kind = 2
+)
+
+// pageSize is the API's largest catalog page.
+const pageSize = 300
+
+// catalog lists all titles of kind.
+func catalog(kind Kind) ([]Item, error) {
+	return cached(catalogKey(kind), func() ([]Item, error) {
 		var all []Item
-		// 300 is the API's max page size.
-		for off := 0; ; off += 300 {
-			if off >= maxPages*300 {
-				return nil, fmt.Errorf("catalog %d: over %d pages", typ, maxPages)
+		for off := 0; ; off += pageSize {
+			if off >= maxPages*pageSize {
+				return nil, fmt.Errorf("catalog %d: over %d pages", kind, maxPages)
 			}
 			var page []Item
-			if err := api(fmt.Sprintf("/media?sortBy=1&genres=&type=%d&query=&limit=300&offset=%d", typ, off), &page, false); err != nil {
+			if err := api(fmt.Sprintf("/media?sortBy=1&genres=&type=%d&query=&limit=%d&offset=%d", kind, pageSize, off), &page, background); err != nil {
 				return nil, err
 			}
 			all = append(all, page...)
-			if len(page) < 300 {
+			if len(page) < pageSize {
 				return all, nil
 			}
 		}
 	})
 }
 
-// limit cuts a catalog of typ to its newest -limit-movies or -limit-shows titles, if set.
-func limit(typ int, items []Item) []Item {
+// limit cuts a catalog of kind to its newest -limit-movies or -limit-shows titles, if set.
+func limit(kind Kind, items []Item) []Item {
 	n := limitMovies
-	if typ == 2 {
+	if kind == Shows {
 		n = limitShows
 	}
 	if n > 0 {
@@ -161,10 +171,10 @@ func peek[T any](key string) (T, bool) {
 	return v, err == nil && json.Unmarshal(b, &v) == nil
 }
 
-// CachedCatalog returns the catalog of typ (1 movies, 2 shows) from the cache, however old, without
+// CachedCatalog returns the catalog of kind from the cache, however old, without
 // fetching, so listing the filesystem never waits on upstream. The crawler keeps it fresh. Likewise
 // CachedShow and CachedEpisodes.
-func CachedCatalog(typ int) []Item { v, _ := peek[[]Item](catalogKey(typ)); return limit(typ, v) }
+func CachedCatalog(kind Kind) []Item { v, _ := peek[[]Item](catalogKey(kind)); return limit(kind, v) }
 
 // CachedShow returns a show's seasons and plot from the cache (see CachedCatalog).
 func CachedShow(showID int) ShowInfo { v, _ := peek[ShowInfo](showKey(showID)); return v }
@@ -175,14 +185,14 @@ func CachedEpisodes(showID, season int) []Item {
 	return v
 }
 
-func catalogKey(typ int) string             { return fmt.Sprintf("catalog-%d", typ) }
+func catalogKey(kind Kind) string           { return fmt.Sprintf("catalog-%d", kind) }
 func showKey(showID int) string             { return fmt.Sprintf("show-%d", showID) }
 func episodesKey(showID, season int) string { return fmt.Sprintf("episodes-%d-%d", showID, season) }
 
 func showMeta(showID int) (ShowInfo, error) {
 	return cached(showKey(showID), func() (ShowInfo, error) {
 		var d ShowInfo
-		err := api(fmt.Sprintf("/media/single/%d?dont_count_view=true", showID), &d, false)
+		err := api(fmt.Sprintf("/media/single/%d?dont_count_view=true", showID), &d, background)
 		return d, err
 	})
 }
@@ -190,7 +200,7 @@ func showMeta(showID int) (ShowInfo, error) {
 func episodes(showID, season int) ([]Item, error) {
 	return cached(episodesKey(showID, season), func() ([]Item, error) {
 		var eps []Item
-		err := api(fmt.Sprintf("/media/episodes/%d/%d", showID, season), &eps, false)
+		err := api(fmt.Sprintf("/media/episodes/%d/%d", showID, season), &eps, background)
 		return eps, err
 	})
 }

@@ -53,12 +53,12 @@ func TestResolveDoodSpelling(t *testing.T) {
 			}
 		}
 	}()
-	if _, m, err := resolve(7, false); err != nil || m.Size != 777777777 {
+	if _, m, err := resolve(7, background); err != nil || m.Size != 777777777 {
 		t.Fatalf("size=%d err=%v", m.Size, err)
 	}
 	// A file under minVideoSize is a broken upload: hidden like a title without a source.
 	size.Store(65536)
-	if _, _, err := resolve(8, false); err == nil || !strings.Contains(err.Error(), "broken upload") {
+	if _, _, err := resolve(8, background); err == nil || !strings.Contains(err.Error(), "broken upload") {
 		t.Fatalf("tiny file: %v", err)
 	}
 	if _, ok := Info(8); ok {
@@ -68,7 +68,7 @@ func TestResolveDoodSpelling(t *testing.T) {
 	if _, ok := Info(9); ok {
 		t.Fatal("tiny file recorded earlier is listed")
 	}
-	if _, _, err := resolve(10, false); err == nil || !strings.Contains(err.Error(), "no direct source") {
+	if _, _, err := resolve(10, background); err == nil || !strings.Contains(err.Error(), "no direct source") {
 		t.Fatalf("bad source URL: %v", err)
 	}
 }

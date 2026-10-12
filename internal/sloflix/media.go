@@ -107,14 +107,14 @@ func describeSources(sources []source) []string {
 }
 
 // resolve fetches a fresh stream URL for id and records it, its size and subtitle in meta.
-func resolve(id int, hi bool) (string, Meta, error) {
-	release := acquire(hi)
+func resolve(id int, p priority) (string, Meta, error) {
+	release := acquire(p)
 	defer func() { release() }() // not defer release(): it's replaced while waiting for DoodStream
 	var d struct {
 		Plot    string   `json:"media_description"`
 		Sources []source `json:"media_sources"`
 	}
-	if err := api(fmt.Sprintf("/media/single/%d?dont_count_view=true", id), &d, hi); err != nil {
+	if err := api(fmt.Sprintf("/media/single/%d?dont_count_view=true", id), &d, p); err != nil {
 		return "", Meta{}, sharedErr{err}
 	}
 	m := Meta{Plot: d.Plot}
@@ -134,8 +134,8 @@ func resolve(id int, hi bool) (string, Meta, error) {
 			stream, err = dood.URL(doodCode, func() error {
 				// Give up the concurrency slot while queued for DoodStream, so lookups that don't need it go on.
 				release()
-				defer func() { release = acquire(hi) }()
-				if hi {
+				defer func() { release = acquire(p) }()
+				if p == playback {
 					return dood.TakePlayback()
 				}
 				return dood.TakeBackground()
@@ -149,7 +149,7 @@ func resolve(id int, hi bool) (string, Meta, error) {
 			m.DeadCode = doodCode
 		}
 	}
-	if stream != "" && hi && prev.Size > 0 {
+	if stream != "" && p == playback && prev.Size > 0 {
 		// Playback skips the size probe: the stream checks the size on every response (stream.open). Nothing
 		// was verified, so a title in its goneGrace period stays in it for the crawler to recheck.
 		m.Size, m.Gone = prev.Size, prev.Gone
@@ -202,12 +202,12 @@ func resolve(id int, hi bool) (string, Meta, error) {
 	}
 	m.URL, m.URLAt = stream, time.Now()
 	if err := writeMeta(id, m); err != nil {
-		if !hi { // unrecorded, the title isn't listed: retry it later
+		if p == background { // unrecorded, the title isn't listed: retry it later
 			return "", m, sharedErr{err}
 		}
 		log.Printf("media %d: %v", id, err) // the link still plays
 	}
-	if !hi && prev.Size == 0 && probeCache > 0 { // a new title: Jellyfin will probe it (see saveHeads)
+	if p == background && prev.Size == 0 && probeCache > 0 { // a new title: Jellyfin will probe it (see saveHeads)
 		writeFile(wantFile(id), nil)
 	}
 	return stream, m, nil
@@ -263,7 +263,7 @@ func StreamURL(id int, force bool) (string, int64, error) {
 	if recent {
 		return "", 0, errFailedRecently
 	}
-	u, m, err := resolve(id, true)
+	u, m, err := resolve(id, playback)
 	if err != nil {
 		lookupMu.Lock()
 		failed[id] = time.Now()

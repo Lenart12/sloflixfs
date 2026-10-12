@@ -4,6 +4,14 @@ import (
 	"time"
 )
 
+// priority orders upstream requests: an open waits on them, the crawler doesn't.
+type priority bool
+
+const (
+	background priority = false
+	playback   priority = true
+)
+
 var (
 	slots chan struct{} // upstream lookups/fetches in flight, capped by -concurrency; set by Start
 	hiQ   = make(chan struct{})
@@ -27,10 +35,10 @@ func throttleLoop(every time.Duration, hi, lo chan struct{}) {
 }
 
 // acquire takes a concurrency slot for a lookup or fetch and returns its release. Take it before waiting for
-// the rate limit so ticks aren't spent on requests that can't start. Playback (hi) bypasses the limit, so
+// the rate limit so ticks aren't spent on requests that can't start. Playback bypasses the limit, so
 // slots held by stuck background requests can't stall it; it still waits for the rate limit.
-func acquire(hi bool) func() {
-	if hi {
+func acquire(p priority) func() {
+	if p == playback {
 		return func() {}
 	}
 	slots <- struct{}{}
@@ -38,10 +46,10 @@ func acquire(hi bool) func() {
 }
 
 // wait takes a sloflix API slot.
-func wait(hi bool) { take(hi, hiQ, loQ) }
+func wait(p priority) { take(p, hiQ, loQ) }
 
-func take(hi bool, hq, lq chan struct{}) {
-	if hi {
+func take(p priority, hq, lq chan struct{}) {
+	if p == playback {
 		<-hq
 	} else {
 		<-lq

@@ -42,8 +42,8 @@ func Subtitle(loc string) ([]byte, error) {
 // fetchSubtitle downloads loc into the cache, or revalidates the cached copy by ETag.
 // It reports whether the cached content changed.
 func fetchSubtitle(loc string) (bool, error) {
-	defer acquire(false)()
-	wait(false)
+	defer acquire(background)()
+	wait(background)
 	log.Printf("sub: GET %q", loc)
 	req, err := web.NewRequest(context.Background(), "GET", subBase+url.PathEscape(loc), nil)
 	if err != nil {

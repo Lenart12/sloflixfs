@@ -52,7 +52,7 @@ func TestGoneGrace(t *testing.T) {
 	}()
 
 	writeMeta(1, Meta{Size: 100 << 20})
-	if _, m, err := resolve(1, false); err == nil || m.Size != 100<<20 || m.Gone.IsZero() {
+	if _, m, err := resolve(1, background); err == nil || m.Size != 100<<20 || m.Gone.IsZero() {
 		t.Fatalf("first gone: size=%d gone=%v err=%v", m.Size, m.Gone, err)
 	}
 	crawl(1) // recheck within grace
@@ -122,7 +122,7 @@ func TestPlaybackKeepsGone(t *testing.T) {
 	}()
 	gone := time.Now().Add(-time.Hour).Round(time.Second)
 	writeMeta(1, Meta{Size: 100 << 20, Gone: gone})
-	if _, _, err := resolve(1, true); err != nil {
+	if _, _, err := resolve(1, playback); err != nil {
 		t.Fatal(err)
 	}
 	if m, _, _ := readMeta(1); !m.Gone.Equal(gone) {
