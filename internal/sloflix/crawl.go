@@ -123,7 +123,8 @@ func crawlQueue() []int {
 	if err != nil {
 		log.Printf("crawl: %v", err)
 	}
-	// Refreshing all ~1500 show listings takes hours, so titles are checked between batches.
+	// Refreshing all ~1300 show and season listings takes over 20 minutes at 1 request/s, so titles are
+	// checked between batches.
 	for _, ep := range episodeList(limit(Shows, shows), time.Now().Add(listingBudget)) {
 		add(ep.ID, ep.CreatedAt())
 	}

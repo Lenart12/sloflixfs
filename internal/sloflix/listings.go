@@ -14,7 +14,7 @@ const (
 	// A listing that shrinks by more than 10% is treated as an upstream glitch, so Jellyfin doesn't delete
 	// the missing titles. Only a shrink that persists this long is accepted.
 	shrinkAccept = 24 * time.Hour
-	// maxPages bounds a catalog, far above the real ~20 pages.
+	// maxPages bounds a catalog, far above the real 6 pages of the larger one.
 	maxPages = 200
 )
 
