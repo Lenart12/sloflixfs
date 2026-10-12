@@ -5,7 +5,6 @@ package sloflix
 import (
 	"os"
 	"path/filepath"
-	"slices"
 	"time"
 )
 
@@ -33,9 +32,6 @@ func Start(cfg Config) error {
 	jfURL, jfKey, jfPath = cfg.JellyfinURL, cfg.JellyfinKey, cfg.JellyfinPath
 	slots = make(chan struct{}, cfg.Concurrency)
 	go throttleLoop(time.Duration(float64(time.Second)/cfg.Rate), hiQ, loQ)
-	// A previous run (just restarted) may have used DoodStream's limit: count the crawler's share as used,
-	// so it waits a window while playback keeps its reserve.
-	doodSent = slices.Repeat([]time.Time{time.Now()}, doodMax-doodReserve)
 	os.RemoveAll(filepath.Join(cacheDir, "subs")) // before v0.4.5, named by upstream's file name
 	for _, d := range []string{"json", "meta", "subtitles", "heads", "want"} {
 		if err := os.MkdirAll(filepath.Join(cacheDir, d), 0755); err != nil {

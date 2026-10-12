@@ -1,4 +1,5 @@
-package sloflix
+// Package dood turns DoodStream video codes into direct links, within DoodStream's lookup limit.
+package dood
 
 import (
 	"bytes"
@@ -18,20 +19,23 @@ import (
 	"github.com/Lenart12/sloflixfs/internal/web"
 )
 
+// maxPage bounds a player page read, far above the real ~0.1 MB.
+const maxPage = 4 << 20
+
 var (
 	// Many titles only carry a DoodStream embed link, often on a dead mirror domain. Video codes work on any
 	// mirror, so embeds are opened here instead.
 	// doodstream.com redirects to whichever mirror is currently live.
-	doodMirror = "https://doodstream.com/e/"
+	Mirror = "https://doodstream.com/e/"
 
-	errVideoGone = errors.New("video not found on DoodStream")
-	passMD5      = regexp.MustCompile(`/pass_md5/[^'"]+`)
-	htmlTitle    = regexp.MustCompile(`<title>([^<]*)`)
+	ErrGone   = errors.New("video not found on DoodStream")
+	passMD5   = regexp.MustCompile(`/pass_md5/[^'"]+`)
+	htmlTitle = regexp.MustCompile(`<title>([^<]*)`)
 )
 
-// doodURL turns a DoodStream video code into a direct, tokenized MP4 URL, the same way the embed player does:
+// URL turns a DoodStream video code into a direct, tokenized MP4 URL, the same way the embed player does:
 // the embed page names a /pass_md5/ path whose response is the file's base URL.
-func doodURL(code string, take func() error) (string, error) {
+func URL(code string, take func() error) (string, error) {
 	get := func(u, ref string) ([]byte, *http.Response, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
@@ -54,7 +58,7 @@ func doodURL(code string, take func() error) (string, error) {
 	// load opens the player page and returns its pass_md5 path and (redirected) URL.
 	load := func() ([]byte, *url.URL, error) {
 		log.Printf("dood: GET %s", code)
-		page, resp, err := get(doodMirror+code, "https://www.sloflix.com/")
+		page, resp, err := get(Mirror+code, "https://www.sloflix.com/")
 		if err != nil {
 			return nil, nil, err
 		}
@@ -68,7 +72,7 @@ func doodURL(code string, take func() error) (string, error) {
 			title = string(m[1])
 		}
 		if strings.Contains(strings.ToLower(title), "video not found") {
-			return nil, nil, errVideoGone
+			return nil, nil, ErrGone
 		}
 		if bytes.Contains(page, []byte("turnstile")) {
 			return nil, nil, fmt.Errorf("doodstream %s: asks for a captcha (Turnstile)", code)

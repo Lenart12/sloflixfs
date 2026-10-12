@@ -46,9 +46,9 @@ const (
 	// Playback failures are remembered this long, so a probe retrying a dead title doesn't refetch each time.
 	playFailTTL = 5 * time.Minute
 	// Upper bounds on what upstream sends, far above real sizes (catalog pages ~0.2 MB, subtitles ~0.1 MB,
-	// player pages ~0.1 MB, ~20 catalog pages), so a broken or hostile server can't exhaust memory.
-	maxJSON, maxSubtitle, maxPage = 64 << 20, 10 << 20, 4 << 20
-	maxPages                      = 200
+	// ~20 catalog pages), so a broken or hostile server can't exhaust memory.
+	maxJSON, maxSubtitle = 64 << 20, 10 << 20
+	maxPages             = 200
 )
 
 // errFailedRecently is a playback lookup's failure, logged when it happened, repeated within playFailTTL.

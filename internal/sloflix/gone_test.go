@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Lenart12/sloflixfs/internal/dood"
 )
 
 // A listed title that upstream reports gone stays listed for goneGrace, then is hidden.
@@ -31,7 +33,7 @@ func TestGoneGrace(t *testing.T) {
 		w.Write([]byte(`{"status":"success","data":{"media_sources":[{"media_source":"https://dead.example/e/abc","media_source_name":"X (DoodStream)"}]}}`))
 	}))
 	defer srv.Close()
-	apiBase, doodMirror = srv.URL, srv.URL+"/e/"
+	apiBase, dood.Mirror = srv.URL, srv.URL+"/e/"
 	cacheDir = t.TempDir()
 	os.MkdirAll(filepath.Join(cacheDir, "meta"), 0755)
 	token, refreshTTL = "test", 0 // refreshTTL 0: every crawl rechecks titles in their grace period

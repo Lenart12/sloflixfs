@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Lenart12/sloflixfs/internal/cdn"
+	"github.com/Lenart12/sloflixfs/internal/dood"
 )
 
 // Meta is what we persist per playable item: size for getattr, subtitle for listing the .vtt.
@@ -101,17 +102,20 @@ func resolve(id int, hi bool) (string, Meta, error) {
 	if stream == "" && doodCode != "" {
 		var err error
 		if doodCode == prev.DeadCode && prev.Size == 0 { // a title in goneGrace (Size > 0) is verified again
-			err = errVideoGone
+			err = dood.ErrGone
 		} else {
-			stream, err = doodURL(doodCode, func() error {
+			stream, err = dood.URL(doodCode, func() error {
 				// Give up the concurrency slot while queued for DoodStream, so lookups that don't need it go on.
 				release()
 				defer func() { release = acquire(hi) }()
-				return doodTake(hi)
+				if hi {
+					return dood.TakePlayback()
+				}
+				return dood.TakeBackground()
 			})
 		}
 		if err != nil {
-			if !errors.Is(err, errVideoGone) {
+			if !errors.Is(err, dood.ErrGone) {
 				return "", Meta{}, sharedErr{err}
 			}
 			missing = fmt.Errorf("DoodStream %s: %w", doodCode, err)

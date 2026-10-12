@@ -11,6 +11,8 @@ import (
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/Lenart12/sloflixfs/internal/dood"
 )
 
 type crawlFail struct {
@@ -66,7 +68,7 @@ func due(id int) (bucket int, written time.Time, ok bool) {
 // Crawl checks titles in the background, forever, so listings only show playable titles and never wait on
 // upstream: new titles first (newest first), then rechecks (see due), oldest first. This also catches
 // changed or removed sources and subtitles added or edited upstream for titles nobody plays. The rate
-// limits pace it; DoodStream's leaves a reserve for playback (doodTake). Workers beyond -concurrency (which
+// limits pace it; DoodStream's leaves a reserve for playback (dood.TakeBackground). Workers beyond -concurrency (which
 // still caps requests in flight) can wait for DoodStream without holding up titles that don't need it.
 func Crawl() {
 	for {
@@ -78,7 +80,7 @@ func Crawl() {
 		next := time.Now().Add(10 * time.Minute)
 		ids := make(chan int)
 		var wg sync.WaitGroup
-		for range cap(slots) + doodMax {
+		for range cap(slots) + dood.Max {
 			wg.Go(func() {
 				for id := range ids {
 					crawl(id)
