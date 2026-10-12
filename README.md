@@ -1,10 +1,16 @@
 # sloflixfs
 
-A read-only FUSE filesystem that exposes the [sloflix.com](https://www.sloflix.com/) catalog as a Jellyfin-compatible media library. Video files are thin wrappers: their bytes are streamed on demand from the provider with HTTP range requests, so nothing but metadata is stored locally.
+A read-only FUSE filesystem that presents the [sloflix.com](https://www.sloflix.com/) catalog as a Jellyfin media library, streaming video on demand.
 
-Docker image: [`lenart12/sloflixfs`](https://hub.docker.com/r/lenart12/sloflixfs) (linux/amd64, linux/arm64).
+[![CI](https://github.com/Lenart12/sloflixfs/actions/workflows/ci.yml/badge.svg)](https://github.com/Lenart12/sloflixfs/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/tag/Lenart12/sloflixfs?label=release&sort=semver)](https://github.com/Lenart12/sloflixfs/tags)
+[![Docker pulls](https://img.shields.io/docker/pulls/lenart12/sloflixfs)](https://hub.docker.com/r/lenart12/sloflixfs)
+[![Image size](https://img.shields.io/docker/image-size/lenart12/sloflixfs/latest)](https://hub.docker.com/r/lenart12/sloflixfs/tags)
+[![Go version](https://img.shields.io/github/go-mod/go-version/Lenart12/sloflixfs)](go.mod)
+[![License](https://img.shields.io/github/license/Lenart12/sloflixfs)](LICENSE)
 
-> Unofficial project, not affiliated with sloflix. It uses the site's private web API, which may change or block it at any time. You need your own sloflix account.
+> [!NOTE]
+> This is an unofficial project, not affiliated with sloflix. It uses the site's private web API, which may change or block it at any time. You need your own sloflix account.
 
 ```
 Movies/
@@ -20,52 +26,68 @@ Shows/
       Lanterns (2026) S01E01.sl.vtt
 ```
 
+## Contents
+
+- [Features](#features)
+- [Quick start](#quick-start)
+- [Running without Docker](#running-without-docker)
+- [Configuration](#configuration)
+- [How it works](#how-it-works)
+- [Limitations](#limitations)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+
 ## Features
 
-- **Streams on demand.** Opening a file fetches a fresh stream URL (from sloflix's direct link, or extracted from a DoodStream embed when there is none); reads are served from one HTTP range response per open file and only reconnect on seeks. Expired URLs and stalled connections are re-resolved automatically.
-- **Jellyfin layout.** `Name (Year)` folders, `SxxEyy` episodes, `.sl.vtt` sidecar subtitles, and NFO files carrying sloflix's Slovenian title, plot, genres, poster and backdrop (images sloflix embeds inline become `poster.jpg`/`fanart.jpg` files). Titles TMDB can't match still get metadata.
-- **Lists only what plays.** A background crawler checks each title (newest first) and the tree shows only titles it found playable. Library scans read only the cache, so they finish quickly and never wait on upstream. For each new title, the crawler also saves the start of the file that Jellyfin's probe reads, so probing it needs no stream lookup.
-- **Gentle on upstream.** All API calls go through a rate limit (default 1/s) and a concurrency limit (default 3). Listings, file sizes and subtitles are cached on disk.
-- **Tracks upstream changes.** Opening a file revalidates its size and subtitle, and the crawler re-checks every title about once a week. Changed titles get a new mtime so Jellyfin re-probes them; titles whose source disappears drop out of the listing after a day, so one wrong "gone" from upstream can't make Jellyfin delete them.
-- **Protects your library.** A listing refresh that loses more than 10% of its entries is treated as an upstream glitch: the previous list keeps being served (and retried hourly) unless the drop persists for 24 hours, so a bad API response can't make Jellyfin delete titles and their watch history.
-- **Playback first.** Lookups for playback jump the rate-limit queue and bypass the concurrency limit, and the crawler leaves part of DoodStream's limit for them, so crawling doesn't delay pressing play.
+- **Streams on demand.** Video is read from the provider with HTTP range requests; only metadata is stored locally.
+- **Jellyfin layout.** `Name (Year)` folders, `SxxEyy` episodes, `.sl.vtt` subtitles, and NFO files with sloflix's title, plot, genres and artwork, so titles TMDB can't match still have metadata.
+- **Lists only what plays.** A background crawler verifies every title, and library scans read only the cache, so they are fast and never wait on upstream.
+- **Fast first probe.** New titles' file headers are kept ready for Jellyfin's first probe.
+- **Playback first.** Opening a file jumps the API queue, skips the concurrency limit and has DoodStream lookups reserved for it.
+- **Tracks upstream changes.** Replaced files and changed subtitles get a new modification time, so Jellyfin re-probes them.
+- **Protects your library.** Upstream glitches can't make Jellyfin delete titles or their watch history.
 
-## Quick start (Docker Compose)
+## Quick start
 
-Runs the mount and Jellyfin together. Requires a Linux host with FUSE (`/dev/fuse`).
+Runs sloflixfs and Jellyfin together with Docker Compose. You need a Linux host with FUSE (`/dev/fuse`).
 
-```sh
-git clone https://github.com/Lenart12/sloflixfs.git
-cd sloflixfs
-cp .env.example .env    # fill in SLOFLIX_USER and SLOFLIX_PASS
-docker compose pull
-docker compose up -d
-```
+1. Clone the repository and add your sloflix credentials:
 
-This runs the published `lenart12/sloflixfs` image. To build from source instead, use `docker compose up -d --build`. To update, run `docker compose pull && docker compose up -d`.
+   ```sh
+   git clone https://github.com/Lenart12/sloflixfs.git
+   cd sloflixfs
+   cp .env.example .env    # set SLOFLIX_USER and SLOFLIX_PASS
+   ```
 
-Jellyfin is then available at http://localhost:8096. Add two libraries:
+2. Start the stack:
 
-| Library type | Folder |
-|---|---|
-| Movies | `/media/sloflix/library/Movies` |
-| Shows | `/media/sloflix/library/Shows` |
+   ```sh
+   docker compose up -d
+   ```
 
-In each library's settings, **disable** these, since they read whole files from upstream or don't work on FUSE:
+3. Open Jellyfin at http://localhost:8096 and add two libraries:
 
-- Trickplay image extraction
-- Chapter image extraction
-- Real-time monitoring
+   | Library type | Folder |
+   |---|---|
+   | Movies | `/media/sloflix/library/Movies` |
+   | Shows | `/media/sloflix/library/Shows` |
 
-To have sloflixfs start a scan when new titles appear, create an API key in Jellyfin (Dashboard → API Keys), set `SLOFLIX_JELLYFIN_URL=http://jellyfin:8096` and `SLOFLIX_JELLYFIN_KEY` in `.env`, and uncomment both in compose.yml.
+4. In each library's settings, turn off **Trickplay image extraction**, **Chapter image extraction** and **Real-time monitoring**. The first two read whole files from upstream; the third doesn't work on FUSE.
 
-For a first try, set `SLOFLIX_LIMIT_MOVIES=20` and `SLOFLIX_LIMIT_SHOWS=2` in `.env` (and uncomment both in compose.yml) to list only the newest titles.
+Titles appear as the crawler verifies them, newest first (see [Crawler](#crawler)).
+
+Optional settings go in `.env`:
+
+- **Automatic library scans:** create an API key in Jellyfin (Dashboard → API Keys) and set `SLOFLIX_JELLYFIN_URL=http://jellyfin:8096` and `SLOFLIX_JELLYFIN_KEY`.
+- **A smaller trial:** set `SLOFLIX_LIMIT_MOVIES=20` and `SLOFLIX_LIMIT_SHOWS=2` to list only the newest titles.
+
+To update, run `docker compose pull && docker compose up -d`. To build from source, run `docker compose up -d --build`.
 
 ### How the Docker setup works
 
-- The `sloflix` container creates the FUSE mount itself (`/dev/fuse` and `SYS_ADMIN`; AppArmor unconfined on Ubuntu hosts). It appears on the host at `$SLOFLIX_DIR/library` (default `/mnt/sloflix/library`) through an `rshared` bind mount.
-- Jellyfin binds the same directory with `rslave` and starts only after the mount passes its health check, so it never scans an empty folder.
-- The parent directory is bound rather than the mount itself. A mount left dead by a crash therefore can't stop the containers from starting; `sloflix` detaches it on startup and Docker restarts the container.
+- The `sloflix` container creates the FUSE mount itself. It needs `/dev/fuse` and `SYS_ADMIN`, and on Ubuntu hosts it runs AppArmor-unconfined.
+- The mount appears on the host at `$SLOFLIX_DIR/library`; the default is `/mnt/sloflix/library`. Jellyfin sees the same directory, and starts only once the mount passes its health check, so it never scans an empty folder.
+- The parent directory is bound instead of the mount itself, so a mount left behind by a crash can't block startup. sloflixfs clears it when it starts.
 
 ## Running without Docker
 
@@ -76,74 +98,120 @@ go build -o sloflixfs .
 SLOFLIX_USER=... SLOFLIX_PASS=... ./sloflixfs -mount ~/sloflix
 ```
 
-To let another user (such as a `jellyfin` service account or a container) read the mount, add `user_allow_other` to `/etc/fuse.conf` and pass `-allow-other`. Unmount with `fusermount3 -u ~/sloflix` or by stopping the process.
+To let another user read the mount (a `jellyfin` service account, or a container), add `user_allow_other` to `/etc/fuse.conf` and pass `-allow-other`. Stop the process or run `fusermount3 -u ~/sloflix` to unmount.
 
 ## Configuration
 
-Every option is a flag or an environment variable: `SLOFLIX_` plus the flag name in capitals, with `_` for `-`. The command line wins over the environment.
+Every option is a flag or an environment variable. The variable name is `SLOFLIX_` followed by the flag name in capitals, with `-` written as `_`. Flags take precedence.
 
 | Flag | Environment | Default | Description |
 |---|---|---|---|
-| `-mount` | `SLOFLIX_MOUNT` | (required) | Mountpoint; created if missing. |
+| `-mount` | `SLOFLIX_MOUNT` | required | Mountpoint; created if missing. |
+| `-user`, `-pass` | `SLOFLIX_USER`, `SLOFLIX_PASS` | required | sloflix credentials. Use the environment for the password, since command-line arguments are visible to other users. |
 | `-cache` | `SLOFLIX_CACHE` | `~/.cache/sloflixfs` | Cache directory (`/cache` in Docker). |
 | `-refresh` | `SLOFLIX_REFRESH` | `12h` | How long catalog, season and episode listings are cached. |
-| `-revalidate` | `SLOFLIX_REVALIDATE` | `168h` | How often each title's size and subtitle are re-checked in the background. |
-| `-probe-cache` | `SLOFLIX_PROBE_CACHE` | `500` | Max new titles whose start is saved so Jellyfin's first probe needs no stream lookup. Within 7h30 of the crawler checking a title its probe uses the stream link the crawler kept; a title still unprobed an hour before that gets its start saved (about 10–16 MB each, deleted once probed; 500 is up to about 8 GB). Beyond it, and with `0`, later probes need a stream lookup. For titles with only a DoodStream embed that's a DoodStream lookup, so a scan probing more than about 15 of them in 5 minutes has the rest wait up to a minute and then fail (Jellyfin retries on a later scan). Opens aren't limited by `-concurrency`. |
-| `-rate` | `SLOFLIX_RATE` | `1` | Max API requests per second. |
-| `-concurrency` | `SLOFLIX_CONCURRENCY` | `3` | Max upstream lookups/fetches in flight (playback is exempt). |
-| `-jellyfin-url` | `SLOFLIX_JELLYFIN_URL` | (off) | Jellyfin's address, e.g. `http://jellyfin:8096`. When set, sloflixfs starts a scan of its libraries when new titles are ready (see below). |
-| `-jellyfin-key` | `SLOFLIX_JELLYFIN_KEY` | | Jellyfin API key (Dashboard → API Keys). |
-| `-jellyfin-path` | `SLOFLIX_JELLYFIN_PATH` | `/media/sloflix/library` | The mount's path as Jellyfin sees it; the libraries under it are the ones scanned. |
-| `-allow-other` | `SLOFLIX_ALLOW_OTHER` | `false` | Allow other users to access the mount. |
-| `-limit-movies`, `-limit-shows` | `SLOFLIX_LIMIT_MOVIES`, `SLOFLIX_LIMIT_SHOWS` | `0` (all) | List and crawl only the newest N titles; for testing. |
-| `-user`, `-pass` | `SLOFLIX_USER`, `SLOFLIX_PASS` | (required) | sloflix credentials. Prefer the environment for the password, since other users can see command-line arguments. |
+| `-revalidate` | `SLOFLIX_REVALIDATE` | `168h` | How often each title is rechecked in the background. |
+| `-probe-cache` | `SLOFLIX_PROBE_CACHE` | `500` | Maximum number of saved file headers for new titles (`0` turns it off). See [Probe cache](#probe-cache). |
+| `-rate` | `SLOFLIX_RATE` | `1` | Maximum API requests per second. |
+| `-concurrency` | `SLOFLIX_CONCURRENCY` | `3` | Maximum background requests in flight. Playback is exempt. |
+| `-jellyfin-url` | `SLOFLIX_JELLYFIN_URL` | off | Jellyfin's address, such as `http://jellyfin:8096`. Turns on [automatic scans](#jellyfin-scans). |
+| `-jellyfin-key` | `SLOFLIX_JELLYFIN_KEY` | | Jellyfin API key. |
+| `-jellyfin-path` | `SLOFLIX_JELLYFIN_PATH` | `/media/sloflix/library` | The mount's path as Jellyfin sees it. Libraries under it are scanned. |
+| `-allow-other` | `SLOFLIX_ALLOW_OTHER` | `false` | Let other users access the mount. |
+| `-limit-movies`, `-limit-shows` | `SLOFLIX_LIMIT_MOVIES`, `SLOFLIX_LIMIT_SHOWS` | `0` (all) | List and crawl only the newest N titles, for testing. |
 
-With Docker Compose, set options in `.env` (e.g. `SLOFLIX_PROBE_CACHE=1000`); uncomment its line in compose.yml to pass it through. The image sets the mount, cache and `-allow-other` itself.
+With Docker Compose, put settings in `.env`. The image sets the mount, the cache and `-allow-other` itself.
 
-## Caching and upstream requests
+## How it works
 
-| What | Stored | Refreshed |
+### Crawler
+
+A title is listed only after the background crawler has checked that it plays. A check is one API call and one small CDN request for the file size, plus a DoodStream lookup for titles that have only a DoodStream embed. New titles are checked first, newest first, then every title is rechecked about once a week (`-revalidate`).
+
+With an empty cache, the library fills in over a few days, because DoodStream lookups are limited (see [Limitations](#limitations)). Show and season listings are fetched in batches of up to 5 minutes, with titles checked in between.
+
+### Playback
+
+Opening a file costs one API call for a stream link, which is then reused for 7h30, also across restarts. Reads come from a single HTTP range response per open file, which reconnects only on seeks. Expired links and stalled connections are renewed automatically.
+
+### Probe cache
+
+Jellyfin probes each new file once to read its format. For 7h30 after the crawler checks a title, that probe uses the link the crawler kept. If the title is still unprobed an hour before the link expires, sloflixfs saves the start of the file instead: through the MP4 index, about 10–16 MB. The saved header is deleted once Jellyfin has probed the file, or after 3 days. At the default of 500 titles, the cache can use up to about 8 GB.
+
+Beyond the limit, or with `-probe-cache 0`, a probe needs a fresh link. For a DoodStream-only title that means a DoodStream lookup, so a scan probing many such titles at once can exceed the lookup limit. The affected probes fail after waiting up to a minute, and Jellyfin retries them on a later scan.
+
+### Jellyfin scans
+
+FUSE has no change notifications, so Jellyfin can't see new titles until its next scheduled scan. With `-jellyfin-url` set, sloflixfs starts a scan of the libraries under `-jellyfin-path` once new titles are listed:
+- at most once an hour;
+- immediately when the probe cache is half full, so new titles keep getting saved headers;
+- never while Jellyfin is already scanning.
+
+### Caching
+
+| Data | Stored | Refreshed |
 |---|---|---|
 | Login token | disk | when missing or rejected |
-| Catalog, season and episode listings | memory + disk | by the crawler after `-refresh` (listings always serve the cached copy); the old copy is kept if the refresh fails or shrinks by >10% (accepted after 24h) |
-| File size, subtitle name, plot per title | disk | on open, and by the crawler every `-revalidate` (titles without a source: every `-refresh`, less often after repeated checks found none, up to about 5 days) |
-| Start of each new title's file (through the MP4 index, plus 7 MiB) not probed within 6h30, up to `-probe-cache` titles | disk | deleted when the file is first closed (Jellyfin's probe), or after 3 days |
+| Catalog, season and episode listings | memory and disk | by the crawler after `-refresh`; directory listings always use the cached copy |
+| File size, subtitle and plot per title | disk | on open, and by the crawler every `-revalidate` |
+| Stream links | disk | after 7h30, or when the CDN rejects one |
 | Subtitle files | disk | in the background, revalidated by ETag |
-| Stream URLs | disk | after 7h30 (links expire after 7h30–8h), or when the CDN rejects one |
+| File headers for Jellyfin's first probe | disk | deleted once probed, or after 3 days |
 | Video data | not cached | |
 
-A title appears once the crawler has checked it: one API call, a CDN request for the file size, and, for titles with only a DoodStream embed link, a DoodStream lookup. With an empty cache the library fills in over a few days, newest titles first, because DoodStream lookups are limited to one per 26 seconds (see Limitations); the crawler fetches the ~1500 show and season listings in batches of up to 5 minutes and checks titles in between. Jellyfin's scheduled scans pick up whatever has appeared since the last one; Jellyfin can't watch the mount for changes (FUSE has no change notifications). With `-jellyfin-url` set, sloflixfs instead starts a scan of the libraries under `-jellyfin-path` itself once new titles are listed: at most once an hour, and as soon as the probe cache is half full so new titles keep getting a saved start. It skips the scan while Jellyfin is already scanning. Opening a file costs one API call (the link is kept for 7h30, across restarts too) and then streams; Jellyfin's first probe of a new title uses the link the crawler kept, or its saved start once that link is about to expire. API, DoodStream and size requests are logged one per line, and each closed file logs a summary of its stream connections, so `docker compose logs -f sloflix` shows what the cache is doing.
+### Safeguards
+
+- **Shrinking listings:** a refreshed listing with more than 10% fewer entries is treated as an upstream glitch. The previous listing is kept, and the refresh retried hourly, unless the drop persists for 24 hours.
+- **Removed titles:** a title that used to play stays listed for 24 hours after upstream first reports it gone, so a single bad response can't make Jellyfin drop it and its watch history.
+- **Failing titles:** a title that has never played and fails on its own, such as on an unreachable video server, is retried after an hour, then twice as long after each failure, up to about 5 days. A failure that affects every title, such as the sloflix API or DoodStream being down, is retried after an hour.
+- **Titles without a source** are rechecked every `-refresh`, backing off the same way.
+- **Broken uploads:** files under 5 MB are hidden like titles without a source.
 
 ## Limitations
 
-- The CDN serves about 550 kB/s per connection, roughly 2–3× a typical bitrate here. That's fine for direct play, but slow for anything that reads whole files.
-- Supported sources: sloflix's direct links (DoodStream CDN or presigned Cloudflare R2 URLs) and DoodStream embed/download links, which are resolved through a working DoodStream mirror because many of sloflix's embed links point at dead mirror domains. StreamP2P-only titles and titles whose DoodStream video was deleted are not listed; that was about 8% of the catalog when tested.
-- DoodStream allows 15 lookups per IP per 5 minutes; after that it answers with a captcha (Cloudflare Turnstile) for about 5 minutes. Only lookups that get as far as requesting the video link count: deleted videos and player pages don't. All its mirror domains redirect to the same backend, so they share that limit, and so does every machine behind the same public IP. sloflixfs reserves 3 of the 15 for playback and spaces the crawler's lookups evenly over the rest: 5m10s (the 5-minute window plus margin) / 12 = one every 26 seconds. After a restart the crawler first waits one window. Opening a file (playback or a Jellyfin probe) can use all 15: when none is free it waits up to a minute for one, and the crawler holds back meanwhile; if none frees up within the minute, the open fails right away instead of hanging. This only matters for titles with just an embed link (about 30% of the catalog). If a captcha shows up anyway, the lookup fails as a temporary error (logged as `asks for a captcha`) and is retried later; sloflixfs doesn't try to get past it.
-- Files under 5 MB are treated as broken uploads (sloflix has a few, e.g. a 64 KB film) and hidden like titles without a source; they're rechecked every `-refresh` in case they're re-uploaded.
-- Titles that were never playable and whose CDN host is unreachable are hidden and retried after an hour, then twice as long after each failure in a row, up to about 5 days (a failure of the sloflix API or DoodStream, shared by every title, is just retried after an hour). Titles that were playable stay listed through such errors, and are only hidden once upstream has reported them gone for 24 hours.
-- Sloflix only provides Slovenian and English titles. NFO files set the Slovenian title; the original-language title comes from TMDB when Jellyfin can match the item.
-- Some of DoodStream's video servers still serve files under a `*.cloudatacdn.com` certificate that expired on 2026-08-01. sloflixfs accepts an expired certificate for that domain only, and only if its chain and hostname verify as of its expiry date; every other host gets normal verification. Each accepted host is logged once.
-- Requests send a browser User-Agent to pass Cloudflare. Stricter bot protection on sloflix's side would stop the mount from working.
+- **Bandwidth.** The CDN serves about 550 kB/s per connection, roughly 2–3× a typical bitrate. That is enough for direct play, but slow for anything that reads whole files.
+- **Supported sources.** sloflix's direct links (DoodStream CDN or Cloudflare R2) and DoodStream embed and download links, which are resolved through a working DoodStream mirror. Titles that only have StreamP2P sources, or whose DoodStream video was deleted, aren't listed. That was about 8% of the catalog when tested.
+- **DoodStream lookup limit.** DoodStream allows 15 lookups per IP address per 5 minutes, then shows a captcha for about 5 minutes. Every machine behind the same public IP shares the limit. sloflixfs reserves 3 lookups for playback and spreads the crawler's lookups evenly over the rest. This affects only titles with just a DoodStream embed, about 30% of the catalog.
+- **Titles.** sloflix provides only Slovenian and English titles. NFO files use the Slovenian one; the original-language title comes from TMDB when Jellyfin matches the item.
+- **Expired certificates.** Some DoodStream video servers still use a `*.cloudatacdn.com` certificate that expired on 2026-08-01. sloflixfs accepts an expired certificate for that domain only, and only if its chain and hostname are otherwise valid. Each accepted host is logged once.
+- **Bot protection.** Requests use a browser User-Agent to pass Cloudflare. Stricter bot protection on sloflix would stop sloflixfs from working.
+
+## Troubleshooting
+
+**Reading the logs.** Run `docker compose logs -f sloflix`. Every API call, DoodStream lookup and size check is one log line, and each closed file logs a summary of its connections.
+
+**A title is missing.** It may not be checked yet, since new titles are checked newest first and a fresh cache takes a few days to fill. If it was checked, the log has a `crawl <id>:` line with the reason:
+- `no direct source`: no supported source;
+- an unreachable video server: retried with backoff (see [Safeguards](#safeguards)).
+
+**`asks for a captcha` in the log.** The DoodStream lookup limit was exceeded, possibly by another machine on the same network. The lookup is retried later; nothing needs to be done.
+
+**`Transport endpoint is not connected` on the mount.** A previous run crashed and left the mount behind. In Docker, restarting the container clears it. Without Docker, run `fusermount3 -u <mountpoint>` and start sloflixfs again.
 
 ## Development
 
 ```sh
-go vet ./... && go test ./...
+go vet ./... && go test -race ./...
 ```
 
-Release (multi-platform image):
+To release a multi-platform image:
 
 ```sh
 git tag vX.Y.Z && git push origin vX.Y.Z
-docker buildx build --platform linux/amd64,linux/arm64 -t lenart12/sloflixfs:X.Y.Z -t lenart12/sloflixfs:latest --push .
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t lenart12/sloflixfs:X.Y.Z -t lenart12/sloflixfs:latest --push .
 ```
 
-Layout:
-
-- `main.go`: flags (each also read from its `SLOFLIX_*` environment variable), mounting and shutdown.
-- `internal/sloflix`: the upstream side. The sloflix API and login (`api.go`), the listing cache (`listings.go`), subtitles (`subtitle.go`), per-title metadata and stream links (`media.go`), probe heads (`heads.go`), the background crawler (`crawl.go`), the API rate limit (`throttle.go`), and setup (`sloflix.go`).
-- `internal/cdn`: video server requests, size probes, certificate checks and host health. `internal/dood`: DoodStream lookups and their rate limit. `internal/jellyfin`: library scan triggers. `internal/mp4`: the MP4 index walk for probe heads. `internal/web`: shared request helpers.
-- `internal/fusefs`: the filesystem. The directory node (`fs.go`), the library tree (`library.go`), file names (`names.go`), video files (`video.go`), the streaming file handle (`stream.go`), and NFO files (`nfo.go`).
+| Package | Purpose |
+|---|---|
+| `main.go` | Flags and environment variables, mounting, shutdown |
+| `internal/fusefs` | The filesystem: directory tree, file names, NFO files, streaming file handle |
+| `internal/sloflix` | The sloflix API, listing and metadata caches, probe cache, background crawler |
+| `internal/cdn` | Video server requests, size probes, certificate checks, host health |
+| `internal/dood` | DoodStream link extraction and its rate limit |
+| `internal/jellyfin` | Library scan triggers |
+| `internal/mp4` | Reading the MP4 index for probe headers |
+| `internal/web` | Shared HTTP request helpers |
 
 ## License
 
