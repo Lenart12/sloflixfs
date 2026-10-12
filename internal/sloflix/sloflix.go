@@ -26,6 +26,18 @@ type Config struct {
 	LimitMovies, LimitShows int
 }
 
+// failTTL is how long a failed refresh is served stale, and how soon a failed check is retried.
+const failTTL = time.Hour
+
+var (
+	cacheDir                string
+	refreshTTL              time.Duration
+	metaTTL                 time.Duration
+	probeCache              int
+	limitMovies, limitShows int
+	username, password      string
+)
+
 // Start applies cfg, creates the cache directories and starts the API rate limiter. It doesn't log in.
 func Start(cfg Config) error {
 	cacheDir, refreshTTL, metaTTL, probeCache = cfg.CacheDir, cfg.Refresh, cfg.Revalidate, cfg.ProbeCache
@@ -49,4 +61,22 @@ func Start(cfg Config) error {
 func Login() error {
 	_, err := login(false)
 	return err
+}
+
+// writeFile replaces name atomically: a concurrent reader (a listing) never sees it empty or half-written,
+// and a failed write (a full disk) leaves the old content.
+func writeFile(name string, b []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(name), ".tmp-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name()) // after a successful rename there's nothing left to remove
+	if _, err := f.Write(b); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), name)
 }

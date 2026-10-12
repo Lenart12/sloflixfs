@@ -16,6 +16,10 @@ import (
 	"github.com/Lenart12/sloflixfs/internal/jellyfin"
 )
 
+// crawlMaxWait caps the backoff of a title the crawler keeps failing on (mostly dead CDN servers): failTTL
+// doubled with each failure in a row, 7 times.
+const crawlMaxWait = 128 * time.Hour
+
 type crawlFail struct {
 	Next time.Time     // no retry before this
 	Wait time.Duration // failTTL, doubled with each failure in a row up to crawlMaxWait

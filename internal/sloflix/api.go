@@ -3,15 +3,12 @@ package sloflix
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,81 +18,27 @@ import (
 	"github.com/Lenart12/sloflixfs/internal/web"
 )
 
+// apiBase is sloflix's API, swapped for a test server in tests.
+var apiBase = "https://api.sloflix.com/v1"
+
+// startTime stands in for titles without a valid creation time.
 var startTime = time.Now()
 
-var apiBase = "https://api.sloflix.com/v1" // a var for tests
-
 const (
-	subBase = "https://sloflix.com/subtitles/"
-	referer = "https://player.sloflix.com/"
-	// Stream links expire after 7.5–8h (measured 2026-10: 5 links, direct and embed, all valid at 7h30m and
-	// "error_expired" at 8h); a rejected link is re-resolved anyway.
-	urlTTL  = 7*time.Hour + 30*time.Minute
-	failTTL = time.Hour
 	// A failed login (bad credentials, sloflix down) is retried after this.
 	loginRetry = 5 * time.Minute
-	// A title the crawler keeps failing on (mostly dead CDN servers) waits failTTL, doubling with each
-	// failure in a row up to this.
-	crawlMaxWait = 128 * time.Hour // 1h doubled 7 times, about 5 days
-	// A listing that shrinks by more than 10% is treated as an upstream glitch, so Jellyfin doesn't delete
-	// the missing titles. Only a shrink that persists this long is accepted.
-	shrinkAccept = 24 * time.Hour
-	// A title that used to play stays listed this long after upstream first says it's gone, so one wrong
-	// "gone" (an anti-bot page, a CDN hiccup) can't make Jellyfin drop it and its watch history.
-	goneGrace = 24 * time.Hour
-	// Playback failures are remembered this long, so a probe retrying a dead title doesn't refetch each time.
-	playFailTTL = 5 * time.Minute
-	// Upper bounds on what upstream sends, far above real sizes (catalog pages ~0.2 MB, subtitles ~0.1 MB,
-	// ~20 catalog pages), so a broken or hostile server can't exhaust memory.
-	maxJSON, maxSubtitle = 64 << 20, 10 << 20
-	maxPages             = 200
+	// maxJSON bounds an API response, far above a real catalog page (~0.2 MB).
+	maxJSON = 64 << 20
 )
 
-// errFailedRecently is a playback lookup's failure, logged when it happened, repeated within playFailTTL.
-var errFailedRecently = errors.New("lookup failed recently")
-
-// Quiet reports whether err was already logged (errFailedRecently), so a caller doesn't log it again.
-func Quiet(err error) bool { return errors.Is(err, errFailedRecently) }
-
 var (
-	cacheDir   string
-	refreshTTL time.Duration
-	metaTTL    time.Duration
-	probeCache int // -probe-cache: max saved starts of new titles awaiting Jellyfin's probe (saveHead); 0 disables
-
-	limitMovies, limitShows int // -limit-movies, -limit-shows: only the newest titles (0 = all), for testing
-	username                string
-	password                string
-
 	apiClient = &http.Client{Timeout: 30 * time.Second}
 
 	tokenMu  sync.Mutex
 	token    string
-	loginErr error     // the last login's error; guarded by tokenMu
-	loginAt  time.Time // when it failed; guarded by tokenMu
-
-	memMu sync.Mutex
-	mem   = map[string]memEntry{}
-
-	// fetchMu holds one lock per listing key, so concurrent requests for a listing share one fetch while
-	// other listings (and their disk reads) don't wait behind it.
-	fetchMu sync.Map                 // listing key -> *sync.Mutex
-	shrunk  = map[string]time.Time{} // listing key -> when it was first seen shrunk; guarded by memMu
-
-	lookupMu    sync.Mutex
-	failed      = map[int]time.Time{} // failed playback lookups; guarded by lookupMu
-	crawlFailed = map[int]crawlFail{} // failed crawler checks, kept apart so they don't block playback; guarded by lookupMu
-
-	slots chan struct{} // upstream lookups/fetches in flight, capped by -concurrency; set by Start
-
-	hiQ = make(chan struct{})
-	loQ = make(chan struct{})
+	loginErr error     // the last login's error
+	loginAt  time.Time // when it failed
 )
-
-type memEntry struct {
-	v  any
-	at time.Time
-}
 
 // Item is a movie, show or episode from a catalog or season listing.
 type Item struct {
@@ -217,238 +160,4 @@ func api(path string, out any, hi bool) error {
 		}
 		return fmt.Errorf("%s: %q", path, msg)
 	}
-}
-
-// cached returns fetch()'s result, memoized in memory and on disk for refreshTTL.
-// If a refresh fails, the stale copy is served.
-func cached[T any](key string, fetch func() (T, error)) (T, error) {
-	memMu.Lock()
-	e, ok := mem[key]
-	memMu.Unlock()
-	if ok && time.Since(e.at) < refreshTTL {
-		return e.v.(T), nil
-	}
-	mu, _ := fetchMu.LoadOrStore(key, new(sync.Mutex))
-	mu.(*sync.Mutex).Lock()
-	defer mu.(*sync.Mutex).Unlock()
-	memMu.Lock()
-	e, ok = mem[key]
-	memMu.Unlock()
-	if ok && time.Since(e.at) < refreshTTL {
-		return e.v.(T), nil
-	}
-	var v T
-	file := filepath.Join(cacheDir, "json", key+".json")
-	if st, err := os.Stat(file); err == nil {
-		b, _ := os.ReadFile(file)
-		if json.Unmarshal(b, &v) == nil {
-			e, ok = memEntry{v, st.ModTime()}, true
-			if time.Since(st.ModTime()) < refreshTTL {
-				memMu.Lock()
-				mem[key] = e
-				memMu.Unlock()
-				return v, nil
-			}
-		}
-	}
-	release := acquire(false)
-	v, err := fetch()
-	release()
-	memMu.Lock()
-	if err == nil && ok && entries(v)*10 < entries(e.v)*9 {
-		if first, seen := shrunk[key]; !seen {
-			shrunk[key] = time.Now()
-			err = fmt.Errorf("%d entries, down from %d; holding the old list for up to %v", entries(v), entries(e.v), shrinkAccept)
-		} else if time.Since(first) < shrinkAccept {
-			err = fmt.Errorf("%d entries, down from %d since %s", entries(v), entries(e.v), first.Format(time.DateTime))
-		} else {
-			log.Printf("%s: accepting shrink to %d entries after %v", key, entries(v), shrinkAccept)
-		}
-	}
-	if err == nil {
-		delete(shrunk, key)
-	}
-	memMu.Unlock()
-	if err != nil {
-		if ok {
-			log.Printf("refresh %s failed, serving stale: %v", key, err)
-			// Keep serving the stale copy for failTTL instead of retrying on every listing.
-			memMu.Lock()
-			mem[key] = memEntry{e.v, time.Now().Add(failTTL - refreshTTL)}
-			memMu.Unlock()
-			return e.v.(T), nil
-		}
-		return v, err
-	}
-	b, _ := json.Marshal(v)
-	if err := writeFile(file, b); err != nil {
-		log.Printf("%s: %v", key, err) // still served from memory
-	}
-	memMu.Lock()
-	mem[key] = memEntry{v, time.Now()}
-	memMu.Unlock()
-	return v, nil
-}
-
-// entries counts a cached listing's entries for the shrink guard.
-func entries(v any) int {
-	switch v := v.(type) {
-	case []Item:
-		return len(v)
-	case ShowInfo:
-		return len(v.Seasons)
-	}
-	return 0
-}
-
-// catalog lists all movies (typ 1) or shows (typ 2).
-func catalog(typ int) ([]Item, error) {
-	return cached(catalogKey(typ), func() ([]Item, error) {
-		var all []Item
-		// 300 is the API's max page size.
-		for off := 0; ; off += 300 {
-			if off >= maxPages*300 {
-				return nil, fmt.Errorf("catalog %d: over %d pages", typ, maxPages)
-			}
-			var page []Item
-			if err := api(fmt.Sprintf("/media?sortBy=1&genres=&type=%d&query=&limit=300&offset=%d", typ, off), &page, false); err != nil {
-				return nil, err
-			}
-			all = append(all, page...)
-			if len(page) < 300 {
-				return all, nil
-			}
-		}
-	})
-}
-
-// limit cuts a catalog of typ to its newest -limit-movies or -limit-shows titles, if set.
-func limit(typ int, items []Item) []Item {
-	n := limitMovies
-	if typ == 2 {
-		n = limitShows
-	}
-	if n > 0 {
-		return items[:min(n, len(items))]
-	}
-	return items
-}
-
-// peek returns a cached listing from memory or disk, however old, without fetching it.
-func peek[T any](key string) (T, bool) {
-	memMu.Lock()
-	e, ok := mem[key]
-	memMu.Unlock()
-	if ok {
-		return e.v.(T), true
-	}
-	var v T
-	b, err := os.ReadFile(filepath.Join(cacheDir, "json", key+".json"))
-	return v, err == nil && json.Unmarshal(b, &v) == nil
-}
-
-// CachedCatalog returns the catalog of typ (1 movies, 2 shows) from the cache, however old, without
-// fetching, so listing the filesystem never waits on upstream. The crawler keeps it fresh. Likewise
-// CachedShow and CachedEpisodes.
-func CachedCatalog(typ int) []Item { v, _ := peek[[]Item](catalogKey(typ)); return limit(typ, v) }
-
-// CachedShow returns a show's seasons and plot from the cache (see CachedCatalog).
-func CachedShow(showID int) ShowInfo { v, _ := peek[ShowInfo](showKey(showID)); return v }
-
-// CachedEpisodes returns a season's episodes from the cache (see CachedCatalog).
-func CachedEpisodes(showID, season int) []Item {
-	v, _ := peek[[]Item](episodesKey(showID, season))
-	return v
-}
-
-func catalogKey(typ int) string             { return fmt.Sprintf("catalog-%d", typ) }
-func showKey(showID int) string             { return fmt.Sprintf("show-%d", showID) }
-func episodesKey(showID, season int) string { return fmt.Sprintf("episodes-%d-%d", showID, season) }
-
-func showMeta(showID int) (ShowInfo, error) {
-	return cached(showKey(showID), func() (ShowInfo, error) {
-		var d ShowInfo
-		err := api(fmt.Sprintf("/media/single/%d?dont_count_view=true", showID), &d, false)
-		return d, err
-	})
-}
-
-func episodes(showID, season int) ([]Item, error) {
-	return cached(episodesKey(showID, season), func() ([]Item, error) {
-		var eps []Item
-		err := api(fmt.Sprintf("/media/episodes/%d/%d", showID, season), &eps, false)
-		return eps, err
-	})
-}
-
-// writeFile replaces name atomically: a concurrent reader (a listing) never sees it empty or half-written,
-// and a failed write (a full disk) leaves the old content.
-func writeFile(name string, b []byte) error {
-	f, err := os.CreateTemp(filepath.Dir(name), ".tmp-")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name()) // after a successful rename there's nothing left to remove
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(f.Name(), name)
-}
-
-// subFile is where subtitle loc is cached, named by its hash: loc comes from upstream, and subtitles in
-// different folders can share a file name.
-func subFile(loc string) string {
-	sum := sha256.Sum256([]byte(loc))
-	return filepath.Join(cacheDir, "subtitles", hex.EncodeToString(sum[:16]))
-}
-
-// Subtitle returns subtitle file loc, from the cache or downloaded.
-func Subtitle(loc string) ([]byte, error) {
-	if b, err := os.ReadFile(subFile(loc)); err == nil {
-		return b, nil
-	}
-	if _, err := fetchSubtitle(loc); err != nil {
-		return nil, err
-	}
-	return os.ReadFile(subFile(loc))
-}
-
-// fetchSubtitle downloads loc into the cache, or revalidates the cached copy by ETag.
-// It reports whether the cached content changed.
-func fetchSubtitle(loc string) (bool, error) {
-	defer acquire(false)()
-	wait(false)
-	log.Printf("sub: GET %q", loc)
-	req, err := web.NewRequest(context.Background(), "GET", subBase+url.PathEscape(loc), nil)
-	if err != nil {
-		return false, err
-	}
-	if etag, err := os.ReadFile(subFile(loc) + ".etag"); err == nil {
-		req.Header.Set("If-None-Match", string(etag))
-	}
-	resp, err := apiClient.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusNotModified {
-		return false, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		return false, fmt.Errorf("subtitle %q: %s", loc, resp.Status)
-	}
-	b, err := web.ReadAll(resp.Body, maxSubtitle)
-	if err != nil {
-		return false, fmt.Errorf("subtitle %q: %w", loc, err)
-	}
-	old, _ := os.ReadFile(subFile(loc))
-	if err := writeFile(subFile(loc), b); err != nil {
-		return false, err
-	}
-	// After the content: a new ETag with the old content would keep it stale for good.
-	return !bytes.Equal(old, b), writeFile(subFile(loc)+".etag", []byte(resp.Header.Get("ETag")))
 }

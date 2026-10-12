@@ -15,10 +15,6 @@ import (
 	"github.com/Lenart12/sloflixfs/internal/mp4"
 )
 
-// minVideoSize is the smallest file treated as a video. Smaller ones are broken uploads (seen: 32 KB and
-// 64 KB films, a 1.6 MB episode) that ffprobe can't read, so they're hidden like titles without a source.
-const minVideoSize = 5 << 20
-
 // fetchHead saves the start of title id's file from stream (see saveHead), if the file is still size bytes.
 func fetchHead(id int, stream string, size int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute) // up to ~70 MB, usually ~16

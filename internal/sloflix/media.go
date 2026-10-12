@@ -10,10 +10,37 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Lenart12/sloflixfs/internal/cdn"
 	"github.com/Lenart12/sloflixfs/internal/dood"
+)
+
+const (
+	// Stream links expire after 7.5–8h (measured 2026-10: 5 links, direct and embed, all valid at 7h30m and
+	// "error_expired" at 8h); a rejected link is re-resolved anyway.
+	urlTTL = 7*time.Hour + 30*time.Minute
+	// A title that used to play stays listed this long after upstream first says it's gone, so one wrong
+	// "gone" (an anti-bot page, a CDN hiccup) can't make Jellyfin drop it and its watch history.
+	goneGrace = 24 * time.Hour
+	// Playback failures are remembered this long, so a probe retrying a dead title doesn't refetch each time.
+	playFailTTL = 5 * time.Minute
+	// minVideoSize is the smallest file treated as a video. Smaller ones are broken uploads (seen: 32 KB and
+	// 64 KB films, a 1.6 MB episode) that ffprobe can't read, so they're hidden like titles without a source.
+	minVideoSize = 5 << 20
+)
+
+// errFailedRecently is a playback lookup's failure, logged when it happened, repeated within playFailTTL.
+var errFailedRecently = errors.New("lookup failed recently")
+
+// Quiet reports whether err was already logged (errFailedRecently), so a caller doesn't log it again.
+func Quiet(err error) bool { return errors.Is(err, errFailedRecently) }
+
+var (
+	lookupMu    sync.Mutex
+	failed      = map[int]time.Time{} // failed playback lookups
+	crawlFailed = map[int]crawlFail{} // failed crawler checks, kept apart so they don't block playback
 )
 
 // Meta is what we persist per playable item: size for getattr, subtitle for listing the .vtt.

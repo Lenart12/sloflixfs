@@ -4,6 +4,12 @@ import (
 	"time"
 )
 
+var (
+	slots chan struct{} // upstream lookups/fetches in flight, capped by -concurrency; set by Start
+	hiQ   = make(chan struct{})
+	loQ   = make(chan struct{})
+)
+
 // throttleLoop hands out one request slot at a time, at least every apart, preferring waiters on hi
 // (playback) over lo. The first slot after an idle period goes out at once, but never two back to back.
 func throttleLoop(every time.Duration, hi, lo chan struct{}) {
