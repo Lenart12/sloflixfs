@@ -103,7 +103,7 @@ With Docker Compose, set options in `.env` (e.g. `SLOFLIX_PROBE_CACHE=1000`); un
 ## Caching and upstream requests
 
 | What | Stored | Refreshed |
-|---|---|---|---|
+|---|---|---|
 | Login token | disk | when missing or rejected |
 | Catalog, season and episode listings | memory + disk | by the crawler after `-refresh` (listings always serve the cached copy); the old copy is kept if the refresh fails or shrinks by >10% (accepted after 24h) |
 | File size, subtitle name, plot per title | disk | on open, and by the crawler every `-revalidate` (titles without a source: every `-refresh`, less often after repeated checks found none, up to about 5 days) |
