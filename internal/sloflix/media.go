@@ -118,35 +118,27 @@ func resolve(id int, p priority) (string, Meta, error) {
 		return "", Meta{}, sharedErr{err}
 	}
 	m := Meta{Plot: d.Plot}
-	stream, doodCode, sub := pickSource(d.Sources)
+	stream, code, sub := pickSource(d.Sources)
 	if sub != nil {
 		m.Sub = *sub
 	}
-	// missing is set when the source exists but its video is gone; that's persisted as no source, while
-	// other errors (dead hosts, timeouts) are transient.
 	prev, _, hasPrev := readMeta(id)
+	// missing means the source exists but its video is gone, which is persisted as no source; other errors
+	// (dead hosts, timeouts) are transient.
 	var missing error
-	if stream == "" && doodCode != "" {
+	if stream == "" && code != "" {
 		var err error
-		if doodCode == prev.DeadCode && prev.Size == 0 { // a title in goneGrace (Size > 0) is verified again
-			err = dood.ErrGone
-		} else {
-			stream, err = dood.URL(doodCode, func() error {
-				// Give up the concurrency slot while queued for DoodStream, so lookups that don't need it go on.
-				release()
-				defer func() { release = acquire(p) }()
-				if p == playback {
-					return dood.TakePlayback()
-				}
-				return dood.TakeBackground()
-			})
-		}
+		stream, missing, err = doodStream(code, prev, func() error {
+			// Give up the concurrency slot while queued for DoodStream, so lookups that don't need it go on.
+			release()
+			defer func() { release = acquire(p) }()
+			return takeDood(p)
+		})
 		if err != nil {
-			if !errors.Is(err, dood.ErrGone) {
-				return "", Meta{}, sharedErr{err}
-			}
-			missing = fmt.Errorf("DoodStream %s: %w", doodCode, err)
-			m.DeadCode = doodCode
+			return "", Meta{}, sharedErr{err}
+		}
+		if missing != nil {
+			m.DeadCode = code
 		}
 	}
 	if stream != "" && p == playback && prev.Size > 0 {
@@ -154,31 +146,76 @@ func resolve(id int, p priority) (string, Meta, error) {
 		// was verified, so a title in its goneGrace period stays in it for the crawler to recheck.
 		m.Size, m.Gone = prev.Size, prev.Gone
 	} else if stream != "" {
-		start := time.Now()
-		size, err := cdn.ProbeSize(stream)
-		if err == nil {
-			u, _ := url.Parse(stream)
-			log.Printf("cdn: probe %d %s %v", id, u.Host, time.Since(start).Round(time.Millisecond))
-		}
-		if errors.Is(err, cdn.ErrFileGone) {
-			stream, missing = "", err
-		} else if err != nil {
+		var err error
+		if m.Size, missing, err = measure(id, stream); err != nil {
 			return "", Meta{}, err
-		} else if size < minVideoSize {
-			stream, missing = "", fmt.Errorf("file is only %d bytes, likely a broken upload", size)
-			size = 0 // no source: rechecked after refreshTTL, in case it's re-uploaded
-			os.Remove(headFile(id))
 		}
-		m.Size = size
-	}
-	var noSource error
-	if stream == "" && missing != nil {
-		noSource = fmt.Errorf("no direct source: %w", missing)
-	} else if stream == "" {
-		noSource = fmt.Errorf("no direct source (got %d: %q)", len(d.Sources), describeSources(d.Sources))
+		if missing != nil {
+			stream = ""
+		}
 	}
 	m.Changed = prev.Changed
-	if noSource != nil && prev.Size > 0 {
+	if stream == "" {
+		reason := fmt.Errorf("no direct source (got %d: %q)", len(d.Sources), describeSources(d.Sources))
+		if missing != nil {
+			reason = fmt.Errorf("no direct source: %w", missing)
+		}
+		m, err := recordNoSource(id, prev, hasPrev, m, reason)
+		return "", m, err
+	}
+	if hasPrev {
+		noteChange(id, prev, &m)
+	}
+	m.URL, m.URLAt = stream, time.Now()
+	if err := recordPlayable(id, p, prev.Size == 0, m); err != nil {
+		return "", m, err
+	}
+	return stream, m, nil
+}
+
+// doodStream extracts a stream link from DoodStream video code. missing is set if DoodStream reports the
+// video deleted, err for any other failure.
+func doodStream(code string, prev Meta, take func() error) (stream string, missing, err error) {
+	if code == prev.DeadCode && prev.Size == 0 { // a title in goneGrace (Size > 0) is verified again
+		return "", fmt.Errorf("DoodStream %s: %w", code, dood.ErrGone), nil
+	}
+	stream, err = dood.URL(code, take)
+	if errors.Is(err, dood.ErrGone) {
+		return "", fmt.Errorf("DoodStream %s: %w", code, err), nil
+	}
+	return stream, nil, err
+}
+
+func takeDood(p priority) error {
+	if p == playback {
+		return dood.TakePlayback()
+	}
+	return dood.TakeBackground()
+}
+
+// measure probes a stream's size. missing is set if the file is gone or too small to be a video.
+func measure(id int, stream string) (size int64, missing, err error) {
+	start := time.Now()
+	size, err = cdn.ProbeSize(stream)
+	if errors.Is(err, cdn.ErrFileGone) {
+		return 0, err, nil
+	}
+	if err != nil {
+		return 0, nil, err
+	}
+	u, _ := url.Parse(stream)
+	log.Printf("cdn: probe %d %s %v", id, u.Host, time.Since(start).Round(time.Millisecond))
+	if size < minVideoSize {
+		os.Remove(headFile(id))
+		return 0, fmt.Errorf("file is only %d bytes, likely a broken upload", size), nil
+	}
+	return size, nil, nil
+}
+
+// recordNoSource records that id has no playable source. A title that used to play stays listed for
+// goneGrace after upstream first reports it gone.
+func recordNoSource(id int, prev Meta, hasPrev bool, m Meta, reason error) (Meta, error) {
+	if prev.Size > 0 {
 		gone := prev.Gone
 		if gone.IsZero() {
 			gone = time.Now()
@@ -186,31 +223,41 @@ func resolve(id int, p priority) (string, Meta, error) {
 		if time.Since(gone) < goneGrace {
 			m.Size, m.Gone = prev.Size, gone
 			writeMeta(id, m)
-			return "", m, fmt.Errorf("%w; still listed until %s", noSource, gone.Add(goneGrace).Format(time.DateTime))
+			return m, fmt.Errorf("%w; still listed until %s", reason, gone.Add(goneGrace).Format(time.DateTime))
 		}
 	}
-	if hasPrev && (prev.Size != m.Size || prev.Sub != m.Sub) {
-		log.Printf("media %d changed: size %d -> %d, sub %q -> %q", id, prev.Size, m.Size, prev.Sub, m.Sub)
-		m.Changed = time.Now()
-		if prev.Size > 0 && prev.Size != m.Size {
-			os.Remove(headFile(id)) // it's from the old file
-		}
+	if hasPrev {
+		noteChange(id, prev, &m)
 	}
-	if noSource != nil {
-		writeMeta(id, m)
-		return "", m, noSource
+	writeMeta(id, m)
+	return m, reason
+}
+
+// noteChange bumps m.Changed if its size or subtitle differ from prev, and drops the old file's head.
+func noteChange(id int, prev Meta, m *Meta) {
+	if prev.Size == m.Size && prev.Sub == m.Sub {
+		return
 	}
-	m.URL, m.URLAt = stream, time.Now()
+	log.Printf("media %d changed: size %d -> %d, sub %q -> %q", id, prev.Size, m.Size, prev.Sub, m.Sub)
+	m.Changed = time.Now()
+	if prev.Size > 0 && prev.Size != m.Size {
+		os.Remove(headFile(id))
+	}
+}
+
+// recordPlayable records a verified title. The crawler marks a new one for saveHeads, since Jellyfin will
+// probe it.
+func recordPlayable(id int, p priority, isNew bool, m Meta) error {
 	if err := writeMeta(id, m); err != nil {
 		if p == background { // unrecorded, the title isn't listed: retry it later
-			return "", m, sharedErr{err}
+			return sharedErr{err}
 		}
 		log.Printf("media %d: %v", id, err) // the link still plays
 	}
-	if p == background && prev.Size == 0 && probeCache > 0 { // a new title: Jellyfin will probe it (see saveHeads)
+	if p == background && isNew && probeCache > 0 {
 		writeFile(wantFile(id), nil)
 	}
-	return stream, m, nil
+	return nil
 }
 
 // Info returns a title's persisted meta and whether it's listed: verified by the crawler as playable. A

@@ -107,17 +107,13 @@ func Crawl() {
 // crawlQueue walks the catalog (the only place its listings are refreshed; readdir serves them cached) and
 // returns the titles due for a check, in order.
 func crawlQueue() []int {
-	type task struct {
-		id, bucket int
-		at         time.Time
-	}
-	var tasks []task
+	var tasks []crawlTask
 	add := func(id int, created time.Time) {
 		if bucket, written, ok := due(id); ok {
 			if bucket == 0 {
 				written = created
 			}
-			tasks = append(tasks, task{id, bucket, written})
+			tasks = append(tasks, crawlTask{id, bucket, written})
 		}
 	}
 	movies, err := catalog(Movies)
@@ -134,8 +130,16 @@ func crawlQueue() []int {
 	// Show and season listings are fetched for at most listingBudget per rebuild, newest shows first; the
 	// rest come from the cache (or wait, if never fetched) until a later rebuild. So with an empty cache, or
 	// when many expire at once, titles are checked between batches of the ~1500 listings, not after all.
-	deadline := time.Now().Add(listingBudget)
-	for _, show := range limit(Shows, shows) {
+	for _, ep := range episodeList(limit(Shows, shows), time.Now().Add(listingBudget)) {
+		add(ep.ID, ep.CreatedAt())
+	}
+	return order(tasks)
+}
+
+// episodeList lists the shows' episodes, refreshing listings until deadline and reading the rest cached.
+func episodeList(shows []Item, deadline time.Time) []Item {
+	var out []Item
+	for _, show := range shows {
 		si, err := CachedShow(show.ID), error(nil)
 		if time.Now().Before(deadline) {
 			si, err = showMeta(show.ID)
@@ -151,19 +155,29 @@ func crawlQueue() []int {
 					log.Printf("crawl: show %d season %d: %v", show.ID, s, err)
 				}
 			}
-			for _, ep := range eps {
-				add(ep.ID, ep.CreatedAt())
-			}
+			out = append(out, eps...)
 		}
 	}
-	slices.SortFunc(tasks, func(a, b task) int {
+	return out
+}
+
+// crawlTask is a title due for a check: its due bucket, and when it was created (bucket 0) or last checked.
+type crawlTask struct {
+	id, bucket int
+	at         time.Time
+}
+
+// order sorts tasks by bucket, new titles newest first and rechecks least recently checked first, and
+// returns their IDs.
+func order(tasks []crawlTask) []int {
+	slices.SortFunc(tasks, func(a, b crawlTask) int {
 		if a.bucket != b.bucket {
 			return a.bucket - b.bucket
 		}
 		if a.bucket == 0 {
-			return b.at.Compare(a.at) // newest first
+			return b.at.Compare(a.at)
 		}
-		return a.at.Compare(b.at) // least recently checked first
+		return a.at.Compare(b.at)
 	})
 	ids, fresh := make([]int, len(tasks)), 0
 	for i, t := range tasks {
@@ -214,25 +228,35 @@ func crawl(id int) {
 	if err == nil && !wasListed { // resolve succeeds only for a playable title: it's newly listed
 		newlyListed()
 	}
-	lookupMu.Lock()
-	if err != nil {
-		// Back off titles that keep failing on their own (a dead video server can stay dead for days, a
-		// missing source rarely comes back); after a shared failure just retry in failTTL.
-		f, wait := crawlFailed[id], failTTL
-		if !errors.As(err, new(sharedErr)) {
-			f.Wait = min(max(2*f.Wait, failTTL), crawlMaxWait)
-			wait = f.Wait
-		}
-		f.Next = time.Now().Add(wait)
-		crawlFailed[id] = f
-	} else {
-		delete(crawlFailed, id)
-	}
-	lookupMu.Unlock()
+	backoff(id, err)
 	if err != nil {
 		log.Printf("crawl %d: %v", id, err)
 		return
 	}
+	revalidateSub(id, m)
+}
+
+// backoff records a check's outcome. Titles that keep failing on their own (a dead video server can stay
+// dead for days, a missing source rarely comes back) wait longer each time; after a failure every title
+// shares, the title is retried in failTTL.
+func backoff(id int, err error) {
+	lookupMu.Lock()
+	defer lookupMu.Unlock()
+	if err == nil {
+		delete(crawlFailed, id)
+		return
+	}
+	f, wait := crawlFailed[id], failTTL
+	if !errors.As(err, new(sharedErr)) {
+		f.Wait = min(max(2*f.Wait, failTTL), crawlMaxWait)
+		wait = f.Wait
+	}
+	f.Next = time.Now().Add(wait)
+	crawlFailed[id] = f
+}
+
+// revalidateSub refreshes a title's cached subtitle, bumping its mtime if the subtitle changed.
+func revalidateSub(id int, m Meta) {
 	if _, err := os.Stat(subFile(m.Sub)); m.Sub == "" || err != nil {
 		return
 	}

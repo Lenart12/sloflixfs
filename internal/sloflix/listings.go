@@ -36,72 +36,97 @@ type memEntry struct {
 // cached returns fetch()'s result, memoized in memory and on disk for refreshTTL.
 // If a refresh fails, the stale copy is served.
 func cached[T any](key string, fetch func() (T, error)) (T, error) {
-	memMu.Lock()
-	e, ok := mem[key]
-	memMu.Unlock()
-	if ok && time.Since(e.at) < refreshTTL {
+	if e, ok := memGet(key); ok && e.fresh() {
 		return e.v.(T), nil
 	}
 	mu, _ := fetchMu.LoadOrStore(key, new(sync.Mutex))
 	mu.(*sync.Mutex).Lock()
 	defer mu.(*sync.Mutex).Unlock()
-	memMu.Lock()
-	e, ok = mem[key]
-	memMu.Unlock()
-	if ok && time.Since(e.at) < refreshTTL {
+	e, ok := memGet(key)
+	if ok && e.fresh() {
 		return e.v.(T), nil
 	}
-	var v T
-	file := filepath.Join(cacheDir, "json", key+".json")
-	if st, err := os.Stat(file); err == nil {
-		b, _ := os.ReadFile(file)
-		if json.Unmarshal(b, &v) == nil {
-			e, ok = memEntry{v, st.ModTime()}, true
-			if time.Since(st.ModTime()) < refreshTTL {
-				memMu.Lock()
-				mem[key] = e
-				memMu.Unlock()
-				return v, nil
-			}
+	if de, found := readCached[T](key); found {
+		e, ok = de, true
+		if e.fresh() {
+			memPut(key, e)
+			return e.v.(T), nil
 		}
 	}
 	release := acquire(background)
 	v, err := fetch()
 	release()
-	memMu.Lock()
-	if err == nil && ok && entries(v)*10 < entries(e.v)*9 {
-		if first, seen := shrunk[key]; !seen {
-			shrunk[key] = time.Now()
-			err = fmt.Errorf("%d entries, down from %d; holding the old list for up to %v", entries(v), entries(e.v), shrinkAccept)
-		} else if time.Since(first) < shrinkAccept {
-			err = fmt.Errorf("%d entries, down from %d since %s", entries(v), entries(e.v), first.Format(time.DateTime))
-		} else {
-			log.Printf("%s: accepting shrink to %d entries after %v", key, entries(v), shrinkAccept)
-		}
-	}
 	if err == nil {
-		delete(shrunk, key)
+		err = checkShrink(key, entries(e.v), entries(v))
 	}
-	memMu.Unlock()
 	if err != nil {
-		if ok {
-			log.Printf("refresh %s failed, serving stale: %v", key, err)
-			// Keep serving the stale copy for failTTL instead of retrying on every listing.
-			memMu.Lock()
-			mem[key] = memEntry{e.v, time.Now().Add(failTTL - refreshTTL)}
-			memMu.Unlock()
-			return e.v.(T), nil
+		if !ok {
+			return v, err
 		}
-		return v, err
+		log.Printf("refresh %s failed, serving stale: %v", key, err)
+		// Keep serving the stale copy for failTTL instead of retrying on every listing.
+		memPut(key, memEntry{e.v, time.Now().Add(failTTL - refreshTTL)})
+		return e.v.(T), nil
 	}
 	b, _ := json.Marshal(v)
-	if err := writeFile(file, b); err != nil {
+	if err := writeFile(cacheFile(key), b); err != nil {
 		log.Printf("%s: %v", key, err) // still served from memory
 	}
-	memMu.Lock()
-	mem[key] = memEntry{v, time.Now()}
-	memMu.Unlock()
+	memPut(key, memEntry{v, time.Now()})
 	return v, nil
+}
+
+func (e memEntry) fresh() bool { return time.Since(e.at) < refreshTTL }
+
+func memGet(key string) (memEntry, bool) {
+	memMu.Lock()
+	defer memMu.Unlock()
+	e, ok := mem[key]
+	return e, ok
+}
+
+func memPut(key string, e memEntry) {
+	memMu.Lock()
+	mem[key] = e
+	memMu.Unlock()
+}
+
+func cacheFile(key string) string { return filepath.Join(cacheDir, "json", key+".json") }
+
+// readCached reads a listing from disk, dated by its file's mtime.
+func readCached[T any](key string) (memEntry, bool) {
+	st, err := os.Stat(cacheFile(key))
+	if err != nil {
+		return memEntry{}, false
+	}
+	b, _ := os.ReadFile(cacheFile(key))
+	var v T
+	if json.Unmarshal(b, &v) != nil {
+		return memEntry{}, false
+	}
+	return memEntry{v, st.ModTime()}, true
+}
+
+// checkShrink rejects a listing that shrank from old to n entries by more than 10%, until it has stayed
+// shrunk for shrinkAccept.
+func checkShrink(key string, old, n int) error {
+	memMu.Lock()
+	defer memMu.Unlock()
+	if n*10 >= old*9 {
+		delete(shrunk, key)
+		return nil
+	}
+	first, seen := shrunk[key]
+	if !seen {
+		shrunk[key] = time.Now()
+		return fmt.Errorf("%d entries, down from %d; holding the old list for up to %v", n, old, shrinkAccept)
+	}
+	if time.Since(first) < shrinkAccept {
+		return fmt.Errorf("%d entries, down from %d since %s", n, old, first.Format(time.DateTime))
+	}
+	log.Printf("%s: accepting shrink to %d entries after %v", key, n, shrinkAccept)
+	delete(shrunk, key)
+	return nil
 }
 
 // entries counts a cached listing's entries for the shrink guard.
@@ -160,15 +185,15 @@ func limit(kind Kind, items []Item) []Item {
 
 // peek returns a cached listing from memory or disk, however old, without fetching it.
 func peek[T any](key string) (T, bool) {
-	memMu.Lock()
-	e, ok := mem[key]
-	memMu.Unlock()
-	if ok {
-		return e.v.(T), true
+	e, ok := memGet(key)
+	if !ok {
+		e, ok = readCached[T](key)
 	}
-	var v T
-	b, err := os.ReadFile(filepath.Join(cacheDir, "json", key+".json"))
-	return v, err == nil && json.Unmarshal(b, &v) == nil
+	if !ok {
+		var zero T
+		return zero, false
+	}
+	return e.v.(T), true
 }
 
 // CachedCatalog returns the catalog of kind from the cache, however old, without
