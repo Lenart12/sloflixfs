@@ -37,11 +37,7 @@ func pace() time.Duration { return Window / (Max - reserve) }
 // stays within a fixed window or token bucket of that size, whichever DoodStream uses. Playback (any open,
 // including Jellyfin's probes) waits at most hiWait, and fails at once if no slot frees up by then;
 // while it waits, the crawler holds back, so opens get the whole window.
-func take(hi bool) error {
-	limit := Max
-	if !hi {
-		limit -= reserve
-	}
+func take(playback bool) error {
 	deadline, waiting := time.Now().Add(hiWait), false
 	defer func() {
 		if waiting {
@@ -53,38 +49,49 @@ func take(hi bool) error {
 	for {
 		mu.Lock()
 		now := time.Now()
-		for len(sent) > 0 && now.Sub(sent[0]) >= Window {
-			sent = sent[1:]
-		}
-		var wait time.Duration
-		if len(sent) >= limit {
-			wait = sent[len(sent)-limit].Add(Window).Sub(now)
-		}
-		if !hi {
-			wait = max(wait, lastLo.Add(pace()).Sub(now))
-			if hiWaiting > 0 {
-				wait = max(wait, time.Second) // an open is waiting: let it go first
-			}
-		}
+		wait := waitLocked(now, playback)
 		if wait <= 0 {
 			sent = append(sent, now)
-			if !hi {
+			if !playback {
 				lastLo = now
 			}
 			mu.Unlock()
 			return nil
 		}
-		if hi && now.Add(wait).After(deadline) {
+		if playback && now.Add(wait).After(deadline) {
 			mu.Unlock()
 			return fmt.Errorf("DoodStream lookup limit reached, free again in %v", wait.Round(time.Second))
 		}
-		if hi && !waiting {
+		if playback && !waiting {
 			hiWaiting++
 			waiting = true
 		}
 		mu.Unlock()
 		time.Sleep(wait)
 	}
+}
+
+// waitLocked drops lookups older than Window and returns how long until the next one fits. mu must be held.
+func waitLocked(now time.Time, playback bool) time.Duration {
+	for len(sent) > 0 && now.Sub(sent[0]) >= Window {
+		sent = sent[1:]
+	}
+	limit := Max
+	if !playback {
+		limit -= reserve
+	}
+	var wait time.Duration
+	if len(sent) >= limit {
+		wait = sent[len(sent)-limit].Add(Window).Sub(now)
+	}
+	if playback {
+		return wait
+	}
+	wait = max(wait, lastLo.Add(pace()).Sub(now))
+	if hiWaiting > 0 {
+		wait = max(wait, time.Second) // an open is waiting: let it go first
+	}
+	return wait
 }
 
 // TakePlayback waits for a lookup slot for an open, failing if none frees up within hiWait.

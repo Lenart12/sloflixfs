@@ -8,8 +8,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -65,8 +63,7 @@ func (s *stream) open(off int64) error {
 			return err // the video server is unreachable: a new link would most likely point to it again
 		}
 		if resp.StatusCode == http.StatusPartialContent {
-			_, total, _ := strings.Cut(resp.Header.Get("Content-Range"), "/")
-			if size, _ := strconv.ParseInt(total, 10, 64); size > 0 && size != s.size {
+			if size := cdn.RangeSize(resp); size > 0 && size != s.size {
 				if s.served {
 					resp.Body.Close()
 					return fmt.Errorf("upstream file changed from %d to %d bytes while open", s.size, size)
@@ -93,13 +90,8 @@ func (s *stream) open(off int64) error {
 func (s *stream) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Reads must be whole (a short read means EOF), so only those entirely within head are served from it.
-	if n := min(int64(len(dest)), s.size-off); s.head != nil && n > 0 && off+n <= s.headLen {
-		if got, _ := s.head.ReadAt(dest[:n], off); got == int(n) {
-			s.served = true
-			s.cached += n
-			return fuse.ReadResultData(dest[:n]), 0
-		}
+	if b, ok := s.readHead(dest, off); ok {
+		return fuse.ReadResultData(b), 0
 	}
 	buf := dest
 	for range 2 {
@@ -114,12 +106,9 @@ func (s *stream) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadRes
 			if off >= s.size { // the first response may have shown a smaller file
 				return fuse.ReadResultData(nil), 0
 			}
-		} else if off > s.pos {
-			if err := s.withDeadline(func(r io.Reader) error { n, err := io.CopyN(io.Discard, r, off-s.pos); s.read += n; return err }); err != nil {
-				s.close()
-				continue
-			}
-			s.pos = off
+		} else if err := s.skipTo(off); err != nil {
+			s.close()
+			continue
 		}
 		dest := buf[:min(int64(len(buf)), s.size-off)]
 		var n int
@@ -134,6 +123,33 @@ func (s *stream) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadRes
 		s.close()
 	}
 	return nil, syscall.EIO
+}
+
+// readHead serves a read from the saved head. Reads must be whole (a short read means EOF), so only those
+// entirely within it are.
+func (s *stream) readHead(dest []byte, off int64) ([]byte, bool) {
+	n := min(int64(len(dest)), s.size-off)
+	if s.head == nil || n <= 0 || off+n > s.headLen {
+		return nil, false
+	}
+	if got, _ := s.head.ReadAt(dest[:n], off); got != int(n) {
+		return nil, false
+	}
+	s.served = true
+	s.cached += n
+	return dest[:n], true
+}
+
+// skipTo reads and discards the open body up to off.
+func (s *stream) skipTo(off int64) error {
+	if off == s.pos {
+		return nil
+	}
+	err := s.withDeadline(func(r io.Reader) error { n, err := io.CopyN(io.Discard, r, off-s.pos); s.read += n; return err })
+	if err == nil {
+		s.pos = off
+	}
+	return err
 }
 
 // withDeadline runs fn on the open body, closing the body if fn takes longer than readTimeout.

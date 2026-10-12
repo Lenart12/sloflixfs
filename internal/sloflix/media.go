@@ -110,11 +110,8 @@ func describeSources(sources []source) []string {
 func resolve(id int, p priority) (string, Meta, error) {
 	release := acquire(p)
 	defer func() { release() }() // not defer release(): it's replaced while waiting for DoodStream
-	var d struct {
-		Plot    string   `json:"media_description"`
-		Sources []source `json:"media_sources"`
-	}
-	if err := api(fmt.Sprintf("/media/single/%d?dont_count_view=true", id), &d, p); err != nil {
+	d, err := details(id, p)
+	if err != nil {
 		return "", Meta{}, sharedErr{err}
 	}
 	m := Meta{Plot: d.Plot}
@@ -127,7 +124,6 @@ func resolve(id int, p priority) (string, Meta, error) {
 	// (dead hosts, timeouts) are transient.
 	var missing error
 	if stream == "" && code != "" {
-		var err error
 		stream, missing, err = doodStream(code, prev, func() error {
 			// Give up the concurrency slot while queued for DoodStream, so lookups that don't need it go on.
 			release()
@@ -146,7 +142,6 @@ func resolve(id int, p priority) (string, Meta, error) {
 		// was verified, so a title in its goneGrace period stays in it for the crawler to recheck.
 		m.Size, m.Gone = prev.Size, prev.Gone
 	} else if stream != "" {
-		var err error
 		if m.Size, missing, err = measure(id, stream); err != nil {
 			return "", Meta{}, err
 		}
@@ -156,11 +151,7 @@ func resolve(id int, p priority) (string, Meta, error) {
 	}
 	m.Changed = prev.Changed
 	if stream == "" {
-		reason := fmt.Errorf("no direct source (got %d: %q)", len(d.Sources), describeSources(d.Sources))
-		if missing != nil {
-			reason = fmt.Errorf("no direct source: %w", missing)
-		}
-		m, err := recordNoSource(id, prev, hasPrev, m, reason)
+		m, err := recordNoSource(id, prev, hasPrev, m, noSource(missing, d.Sources))
 		return "", m, err
 	}
 	if hasPrev {
@@ -171,6 +162,27 @@ func resolve(id int, p priority) (string, Meta, error) {
 		return "", m, err
 	}
 	return stream, m, nil
+}
+
+// titleDetails is the part of a title's API details that resolve uses.
+type titleDetails struct {
+	Plot    string   `json:"media_description"`
+	Sources []source `json:"media_sources"`
+}
+
+func details(id int, p priority) (titleDetails, error) {
+	var d titleDetails
+	err := api(fmt.Sprintf("/media/single/%d?dont_count_view=true", id), &d, p)
+	return d, err
+}
+
+// noSource is the error for a title without a playable source: the reason the chosen source failed
+// (missing), or the sources it has.
+func noSource(missing error, sources []source) error {
+	if missing != nil {
+		return fmt.Errorf("no direct source: %w", missing)
+	}
+	return fmt.Errorf("no direct source (got %d: %q)", len(sources), describeSources(sources))
 }
 
 // doodStream extracts a stream link from DoodStream video code. missing is set if DoodStream reports the
