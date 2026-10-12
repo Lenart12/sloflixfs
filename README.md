@@ -29,8 +29,8 @@ Shows/
 ## Contents
 
 - [Features](#features)
-- [Quick start](#quick-start)
-- [Running without Docker](#running-without-docker)
+- [Installation](#installation)
+- [Building from source](#building-from-source)
 - [Configuration](#configuration)
 - [How it works](#how-it-works)
 - [Limitations](#limitations)
@@ -47,58 +47,148 @@ Shows/
 - **Tracks upstream changes.** Replaced files and changed subtitles get a new modification time, so Jellyfin re-probes them.
 - **Protects your library.** Upstream glitches can't make Jellyfin delete titles or their watch history.
 
-## Quick start
+## Installation
 
-Runs sloflixfs and Jellyfin together with Docker Compose. You need a Linux host with FUSE (`/dev/fuse`).
+sloflixfs runs on Linux and needs FUSE (`/dev/fuse`). Pick one of:
 
-1. Clone the repository and add your sloflix credentials:
+- [Docker Compose](#docker-compose): sloflixfs and Jellyfin together (recommended).
+- [Docker](#docker): sloflixfs only, for an existing Jellyfin.
+- [Go](#go): a native binary.
 
-   ```sh
-   git clone https://github.com/Lenart12/sloflixfs.git
-   cd sloflixfs
-   cp .env.example .env    # set SLOFLIX_USER and SLOFLIX_PASS
-   ```
+Then [set up Jellyfin](#setting-up-jellyfin).
 
-2. Start the stack:
+### Docker Compose
 
-   ```sh
-   docker compose up -d
-   ```
+Create a directory with this `compose.yml`, and fill in your sloflix credentials:
 
-3. Open Jellyfin at http://localhost:8096 and add two libraries:
+```yaml
+services:
+  sloflix:
+    image: lenart12/sloflixfs:latest
+    restart: unless-stopped
+    environment:
+      SLOFLIX_USER: your-username
+      SLOFLIX_PASS: your-password
+      # Optional settings, see Configuration:
+      # SLOFLIX_JELLYFIN_URL: http://jellyfin:8096
+      # SLOFLIX_JELLYFIN_KEY: your-api-key
+      # SLOFLIX_LIMIT_MOVIES: 20
+      # SLOFLIX_LIMIT_SHOWS: 2
+    devices:
+      - /dev/fuse
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - apparmor:unconfined
+    volumes:
+      - cache:/cache
+      - type: bind
+        source: /mnt/sloflix
+        target: /mnt/sloflix
+        bind:
+          propagation: rshared
+          create_host_path: true
+    healthcheck:
+      test: ["CMD", "test", "-d", "/mnt/sloflix/library/Movies"]
+      interval: 30s
+      start_period: 10s
+
+  jellyfin:
+    image: jellyfin/jellyfin
+    restart: unless-stopped
+    depends_on:
+      sloflix:
+        condition: service_healthy
+    ports:
+      - 8096:8096
+    volumes:
+      - jellyfin-config:/config
+      - jellyfin-cache:/cache
+      - type: bind
+        source: /mnt/sloflix
+        target: /media/sloflix
+        read_only: true
+        bind:
+          propagation: rslave
+
+volumes:
+  cache:
+  jellyfin-config:
+  jellyfin-cache:
+```
+
+Start it, then open Jellyfin at http://localhost:8096:
+
+```sh
+docker compose up -d
+```
+
+The file holds your password, so keep it private (`chmod 600 compose.yml`). To update, run `docker compose pull && docker compose up -d`.
+
+How the setup works:
+
+- The `sloflix` container creates the FUSE mount itself. It needs `/dev/fuse` and `SYS_ADMIN`, and on Ubuntu hosts it runs AppArmor-unconfined.
+- The mount appears on the host at `/mnt/sloflix/library`. Jellyfin sees the same directory, and starts only once the mount passes its health check, so it never scans an empty folder.
+- The parent directory is bound instead of the mount itself, so a mount left behind by a crash can't block startup. sloflixfs clears it when it starts.
+
+### Docker
+
+To add sloflixfs to an existing Jellyfin, run the container alone:
+
+```sh
+sudo mkdir -p /mnt/sloflix
+docker run -d --name sloflix --restart unless-stopped \
+  --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor:unconfined \
+  -e SLOFLIX_USER=your-username -e SLOFLIX_PASS=your-password \
+  -v sloflix-cache:/cache \
+  --mount type=bind,source=/mnt/sloflix,target=/mnt/sloflix,bind-propagation=rshared \
+  lenart12/sloflixfs:latest
+```
+
+The library appears on the host at `/mnt/sloflix/library`. If Jellyfin runs in a container, bind `/mnt/sloflix` into it with `rslave` propagation, as in the [Compose file](#docker-compose).
+
+### Go
+
+Requires Go 1.25+ and FUSE 3 (`fusermount3`).
+
+```sh
+go install github.com/Lenart12/sloflixfs@latest
+SLOFLIX_USER=your-username SLOFLIX_PASS=your-password sloflixfs -mount ~/sloflix
+```
+
+The binary is installed to `$(go env GOPATH)/bin`. To let another user read the mount (a `jellyfin` service account, or a container), add `user_allow_other` to `/etc/fuse.conf` and pass `-allow-other`. Stop the process or run `fusermount3 -u ~/sloflix` to unmount.
+
+### Setting up Jellyfin
+
+1. Add two libraries. With Docker Compose the folders are:
 
    | Library type | Folder |
    |---|---|
    | Movies | `/media/sloflix/library/Movies` |
    | Shows | `/media/sloflix/library/Shows` |
 
-4. In each library's settings, turn off **Trickplay image extraction**, **Chapter image extraction** and **Real-time monitoring**. The first two read whole files from upstream; the third doesn't work on FUSE.
+   Otherwise use `Movies` and `Shows` under the mount as Jellyfin sees it.
 
-Titles appear as the crawler verifies them, newest first (see [Crawler](#crawler)).
+2. In each library's settings, turn off **Trickplay image extraction**, **Chapter image extraction** and **Real-time monitoring**. The first two read whole files from upstream; the third doesn't work on FUSE.
 
-Optional settings go in `.env`:
+3. Optionally, let sloflixfs start library scans when new titles are ready: create an API key in Jellyfin (Dashboard → API Keys) and set `SLOFLIX_JELLYFIN_URL` and `SLOFLIX_JELLYFIN_KEY` (see [Jellyfin scans](#jellyfin-scans)).
 
-- **Automatic library scans:** create an API key in Jellyfin (Dashboard → API Keys) and set `SLOFLIX_JELLYFIN_URL=http://jellyfin:8096` and `SLOFLIX_JELLYFIN_KEY`.
-- **A smaller trial:** set `SLOFLIX_LIMIT_MOVIES=20` and `SLOFLIX_LIMIT_SHOWS=2` to list only the newest titles.
+Titles appear as the crawler verifies them, newest first, so a new installation fills in over a few days (see [Crawler](#crawler)). For a quick trial, set `SLOFLIX_LIMIT_MOVIES=20` and `SLOFLIX_LIMIT_SHOWS=2` to list only the newest titles.
 
-To update, run `docker compose pull && docker compose up -d`. To build from source, run `docker compose up -d --build`.
-
-### How the Docker setup works
-
-- The `sloflix` container creates the FUSE mount itself. It needs `/dev/fuse` and `SYS_ADMIN`, and on Ubuntu hosts it runs AppArmor-unconfined.
-- The mount appears on the host at `$SLOFLIX_DIR/library`; the default is `/mnt/sloflix/library`. Jellyfin sees the same directory, and starts only once the mount passes its health check, so it never scans an empty folder.
-- The parent directory is bound instead of the mount itself, so a mount left behind by a crash can't block startup. sloflixfs clears it when it starts.
-
-## Running without Docker
-
-Requires Go 1.25+ and FUSE 3 (`fusermount3`).
+## Building from source
 
 ```sh
+git clone https://github.com/Lenart12/sloflixfs.git
+cd sloflixfs
 go build -o sloflixfs .
-SLOFLIX_USER=... SLOFLIX_PASS=... ./sloflixfs -mount ~/sloflix
 ```
 
-To let another user read the mount (a `jellyfin` service account, or a container), add `user_allow_other` to `/etc/fuse.conf` and pass `-allow-other`. Stop the process or run `fusermount3 -u ~/sloflix` to unmount.
+The repository's `compose.yml` builds the image from source and reads its settings from `.env`:
+
+```sh
+cp .env.example .env    # set SLOFLIX_USER and SLOFLIX_PASS
+docker compose up -d --build
+```
 
 ## Configuration
 
@@ -120,7 +210,7 @@ Every option is a flag or an environment variable. The variable name is `SLOFLIX
 | `-allow-other` | `SLOFLIX_ALLOW_OTHER` | `false` | Let other users access the mount. |
 | `-limit-movies`, `-limit-shows` | `SLOFLIX_LIMIT_MOVIES`, `SLOFLIX_LIMIT_SHOWS` | `0` (all) | List and crawl only the newest N titles, for testing. |
 
-With Docker Compose, put settings in `.env`. The image sets the mount, the cache and `-allow-other` itself.
+In Docker, set options as environment variables. The image sets the mount, the cache and `-allow-other` itself.
 
 ## How it works
 
@@ -178,7 +268,7 @@ FUSE has no change notifications, so Jellyfin can't see new titles until its nex
 
 ## Troubleshooting
 
-**Reading the logs.** Run `docker compose logs -f sloflix`. Every API call, DoodStream lookup and size check is one log line, and each closed file logs a summary of its connections.
+**Reading the logs.** Run `docker compose logs -f sloflix`, or `docker logs -f sloflix` for a standalone container. Every API call, DoodStream lookup and size check is one log line, and each closed file logs a summary of its connections.
 
 **A title is missing.** It may not be checked yet, since new titles are checked newest first and a fresh cache takes a few days to fill. If it was checked, the log has a `crawl <id>:` line with the reason:
 - `no direct source`: no supported source;
