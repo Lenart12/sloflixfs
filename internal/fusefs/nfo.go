@@ -8,6 +8,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 
+	"github.com/Lenart12/sloflixfs/internal/cdn"
 	"github.com/Lenart12/sloflixfs/internal/sloflix"
 )
 
@@ -49,7 +50,7 @@ func nfoChild(file, root string, it sloflix.Item, plot string, mtime time.Time) 
 	var out []child
 	art := func(uri, base string) string {
 		if strings.HasPrefix(uri, "http") {
-			if !sloflix.Reachable(uri) {
+			if !cdn.Reachable(uri) {
 				return ""
 			}
 			return uri

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/Lenart12/sloflixfs/internal/cdn"
 )
 
 // Meta is what we persist per playable item: size for getattr, subtitle for listing the .vtt.
@@ -122,12 +124,12 @@ func resolve(id int, hi bool) (string, Meta, error) {
 		m.Size, m.Gone = prev.Size, prev.Gone
 	} else if stream != "" {
 		start := time.Now()
-		size, err := probeSize(stream)
+		size, err := cdn.ProbeSize(stream)
 		if err == nil {
 			u, _ := url.Parse(stream)
 			log.Printf("cdn: probe %d %s %v", id, u.Host, time.Since(start).Round(time.Millisecond))
 		}
-		if errors.Is(err, errFileGone) {
+		if errors.Is(err, cdn.ErrFileGone) {
 			stream, missing = "", err
 		} else if err != nil {
 			return "", Meta{}, err

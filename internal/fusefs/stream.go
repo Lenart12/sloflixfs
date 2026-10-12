@@ -16,6 +16,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fuse"
 
+	"github.com/Lenart12/sloflixfs/internal/cdn"
 	"github.com/Lenart12/sloflixfs/internal/sloflix"
 )
 
@@ -59,7 +60,7 @@ func (s *stream) open(off int64) error {
 		if err != nil {
 			return err
 		}
-		resp, err := sloflix.GetRange(u, off)
+		resp, err := cdn.GetRange(context.Background(), u, off)
 		if err != nil {
 			return err // the video server is unreachable: a new link would most likely point to it again
 		}

@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Lenart12/sloflixfs/internal/web"
 )
 
 var startTime = time.Now()
@@ -24,9 +26,8 @@ var startTime = time.Now()
 var apiBase = "https://api.sloflix.com/v1" // a var for tests
 
 const (
-	subBase   = "https://sloflix.com/subtitles/"
-	userAgent = "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0"
-	referer   = "https://player.sloflix.com/"
+	subBase = "https://sloflix.com/subtitles/"
+	referer = "https://player.sloflix.com/"
 	// Stream links expire after 7.5–8h (measured 2026-10: 5 links, direct and embed, all valid at 7h30m and
 	// "error_expired" at 8h); a rejected link is re-resolved anyway.
 	urlTTL  = 7*time.Hour + 30*time.Minute
@@ -67,7 +68,6 @@ var (
 	password                string
 
 	apiClient = &http.Client{Timeout: 30 * time.Second}
-	cdnClient = &http.Client{Transport: cdnTransport()}
 
 	tokenMu  sync.Mutex
 	token    string
@@ -125,17 +125,6 @@ type ShowInfo struct {
 	Plot    string `json:"media_description"`
 }
 
-// newRequest builds a request with the browser User-Agent. URLs partly come from upstream data, so an
-// invalid one is an error, not a panic.
-func newRequest(ctx context.Context, method, u string, body io.Reader) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, method, u, body)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", userAgent)
-	return req, nil
-}
-
 // login returns the API token: cached in memory or on disk, or from logging in. A failed login is
 // remembered for loginRetry, so wrong credentials don't send a login request with every API call.
 func login(hi bool) (_ string, err error) {
@@ -155,7 +144,7 @@ func login(hi bool) (_ string, err error) {
 	wait(hi)
 	log.Printf("api: login")
 	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
-	req, err := newRequest(context.Background(), "POST", apiBase+"/user/login", bytes.NewReader(body))
+	req, err := web.NewRequest(context.Background(), "POST", apiBase+"/user/login", bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -202,7 +191,7 @@ func api(path string, out any, hi bool) error {
 		}
 		wait(hi)
 		log.Printf("api: GET %s", path)
-		req, err := newRequest(context.Background(), "GET", apiBase+path, nil)
+		req, err := web.NewRequest(context.Background(), "GET", apiBase+path, nil)
 		if err != nil {
 			return err
 		}
@@ -392,15 +381,6 @@ func episodes(showID, season int) ([]Item, error) {
 	})
 }
 
-// readAll reads r, failing if it holds more than limit bytes. Upstream responses are bounded, not trusted to be.
-func readAll(r io.Reader, limit int64) ([]byte, error) {
-	b, err := io.ReadAll(io.LimitReader(r, limit+1))
-	if err == nil && int64(len(b)) > limit {
-		err = fmt.Errorf("response over %d bytes", limit)
-	}
-	return b, err
-}
-
 // writeFile replaces name atomically: a concurrent reader (a listing) never sees it empty or half-written,
 // and a failed write (a full disk) leaves the old content.
 func writeFile(name string, b []byte) error {
@@ -443,7 +423,7 @@ func fetchSubtitle(loc string) (bool, error) {
 	defer acquire(false)()
 	wait(false)
 	log.Printf("sub: GET %q", loc)
-	req, err := newRequest(context.Background(), "GET", subBase+url.PathEscape(loc), nil)
+	req, err := web.NewRequest(context.Background(), "GET", subBase+url.PathEscape(loc), nil)
 	if err != nil {
 		return false, err
 	}
@@ -461,7 +441,7 @@ func fetchSubtitle(loc string) (bool, error) {
 	if resp.StatusCode != http.StatusOK {
 		return false, fmt.Errorf("subtitle %q: %s", loc, resp.Status)
 	}
-	b, err := readAll(resp.Body, maxSubtitle)
+	b, err := web.ReadAll(resp.Body, maxSubtitle)
 	if err != nil {
 		return false, fmt.Errorf("subtitle %q: %w", loc, err)
 	}

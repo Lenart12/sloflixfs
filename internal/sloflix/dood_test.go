@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/Lenart12/sloflixfs/internal/cdn"
 )
 
 func TestDoodURL(t *testing.T) {
@@ -84,8 +86,8 @@ func TestResolveDoodSpelling(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	defer func(cdn, api *http.Client) { cdnClient, apiClient = cdn, api }(cdnClient, apiClient)
-	cdnClient, apiClient = srv.Client(), srv.Client()
+	defer func(c, api *http.Client) { cdn.Client, apiClient = c, api }(cdn.Client, apiClient)
+	cdn.Client, apiClient = srv.Client(), srv.Client()
 	apiBase, doodMirror = srv.URL, srv.URL+"/e/"
 	cacheDir = t.TempDir()
 	os.MkdirAll(filepath.Join(cacheDir, "meta"), 0755)

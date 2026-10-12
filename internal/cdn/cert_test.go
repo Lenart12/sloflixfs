@@ -1,4 +1,4 @@
-package sloflix
+package cdn
 
 import (
 	"crypto/ecdsa"

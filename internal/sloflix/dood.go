@@ -13,6 +13,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/Lenart12/sloflixfs/internal/cdn"
+	"github.com/Lenart12/sloflixfs/internal/web"
 )
 
 var (
@@ -32,17 +35,17 @@ func doodURL(code string, take func() error) (string, error) {
 	get := func(u, ref string) ([]byte, *http.Response, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
-		req, err := newRequest(ctx, "GET", u, nil)
+		req, err := web.NewRequest(ctx, "GET", u, nil)
 		if err != nil {
 			return nil, nil, err
 		}
 		req.Header.Set("Referer", ref)
-		resp, err := cdnClient.Do(req)
+		resp, err := cdn.Client.Do(req)
 		if err != nil {
-			return nil, nil, redact(err)
+			return nil, nil, cdn.Redact(err)
 		}
 		defer resp.Body.Close()
-		b, err := readAll(resp.Body, maxPage)
+		b, err := web.ReadAll(resp.Body, maxPage)
 		if err == nil && resp.StatusCode != http.StatusOK {
 			err = fmt.Errorf("doodstream %s: %s", u, resp.Status)
 		}

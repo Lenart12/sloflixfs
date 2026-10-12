@@ -3,66 +3,15 @@ package sloflix
 import (
 	"bytes"
 	"encoding/binary"
-	"errors"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 )
-
-func TestProbeSize(t *testing.T) {
-	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/gone" {
-			w.Header().Set("Content-Type", "text/html")
-			w.Write([]byte("error_nofile"))
-			return
-		}
-		w.Header().Set("Content-Range", "bytes 0-0/12345")
-		w.WriteHeader(http.StatusPartialContent)
-		w.Write([]byte("x"))
-	}))
-	var conns atomic.Int32
-	srv.Config.ConnState = func(_ net.Conn, st http.ConnState) {
-		if st == http.StateNew {
-			conns.Add(1)
-		}
-	}
-	srv.Start()
-	defer srv.Close()
-	for range 2 {
-		if n, err := probeSize(srv.URL + "/ok"); err != nil || n != 12345 {
-			t.Fatalf("ok: %d %v", n, err)
-		}
-	}
-	if conns.Load() != 1 {
-		t.Fatalf("probe connections not reused: %d", conns.Load())
-	}
-	if _, err := probeSize(srv.URL + "/gone"); !errors.Is(err, errFileGone) {
-		t.Fatalf("gone: %v", err)
-	}
-
-	// A video server that refused two connections in a row is skipped without another attempt.
-	dead, _ := net.Listen("tcp", "127.0.0.1:0")
-	dead.Close()
-	for i := range 2 {
-		if _, err := probeSize("http://" + dead.Addr().String() + "/f"); err == nil || strings.Contains(err.Error(), "skipped") {
-			t.Fatalf("probe %d of a dead server should try to connect: %v", i+1, err)
-		}
-	}
-	if _, err := probeSize("http://" + dead.Addr().String() + "/f"); err == nil || !strings.Contains(err.Error(), "skipped") {
-		t.Fatalf("third probe of a dead server should be skipped: %v", err)
-	}
-	hosts = map[string]hostCheck{}
-	if _, err := probeSize("http://" + dead.Addr().String() + "/f?token=secret"); err == nil || strings.Contains(err.Error(), "secret") {
-		t.Fatalf("a failed request's error must not carry the link's token: %v", err)
-	}
-}
 
 // A new title's probe saves the file's start through its index (moov) plus headSlack; a file with the
 // index at the end gets none.
@@ -138,34 +87,5 @@ func TestSaveHead(t *testing.T) {
 	}
 	if u, size, err := StreamURL(5, false); err != nil || u != srv.URL+"/start" || size != int64(len(files["/start"])) {
 		t.Fatalf("StreamURL from meta: %q %d %v", u, size, err)
-	}
-}
-
-func TestReachable(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer l.Close()
-	if !Reachable("http://" + l.Addr().String() + "/a.jpg") {
-		t.Fatal("listening host reported unreachable")
-	}
-	dead, _ := net.Listen("tcp", "127.0.0.1:0")
-	dead.Close()
-	if Reachable("http://" + dead.Addr().String() + "/a.jpg") {
-		t.Fatal("closed port reported reachable")
-	}
-	// One failure is rechecked right away; two in a row hold for failTTL.
-	up := l.Addr().String()
-	hosts[up] = hostCheck{at: time.Now(), fails: 1}
-	if !Reachable("http://" + up + "/a.jpg") {
-		t.Fatal("single failure not rechecked")
-	}
-	hosts[up] = hostCheck{at: time.Now().Add(-2 * time.Minute), fails: 2}
-	if Reachable("http://" + up + "/a.jpg") {
-		t.Fatal("two failures in a row should hold for failTTL")
-	}
-	if Reachable("data:image/jpeg;base64,AA==") {
-		t.Fatal("URL without host reported reachable")
 	}
 }
