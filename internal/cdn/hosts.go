@@ -70,7 +70,7 @@ func Reachable(uri string) bool {
 		conn.Close()
 	}
 	if fails := hostResult(addr, err); err != nil {
-		log.Printf("artwork host %s unreachable (%d in a row), left out of NFOs: %v", addr, fails, err)
+		log.Printf("cdn: artwork host %s unreachable (%d in a row), left out of NFOs: %v", addr, fails, err)
 	}
 	return err == nil
 }

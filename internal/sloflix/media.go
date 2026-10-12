@@ -257,7 +257,7 @@ func recordPlayable(id int, p priority, isNew bool, m Meta) error {
 		if p == background { // not listed: the crawler retries it
 			return sharedErr{err}
 		}
-		log.Printf("media %d: %v", id, err) // the link still plays
+		log.Printf("media %d: saving meta: %v", id, err) // the link still plays
 	}
 	if p == background && isNew && probeCache > 0 {
 		writeFile(wantFile(id), nil)
@@ -297,7 +297,7 @@ func SetSize(id int, size int64) {
 	log.Printf("media %d changed: size %d -> %d", id, m.Size, size)
 	m.Size, m.Changed = size, time.Now()
 	if err := writeMeta(id, m); err != nil {
-		log.Printf("media %d: %v", id, err)
+		log.Printf("media %d: saving meta: %v", id, err)
 	}
 	os.Remove(headFile(id))
 }

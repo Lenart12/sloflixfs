@@ -33,6 +33,7 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("mounted on %s", mount)
+	logSettings(cfg)
 	go sloflix.Crawl()
 	go unmountOnSignal(server, mount)
 	server.Wait()
@@ -99,7 +100,7 @@ func mountFS(mount string, allowOther bool) (*fuse.Server, error) {
 func unmountOnSignal(server *fuse.Server, mount string) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	<-sig
+	log.Printf("stopping on %v", <-sig)
 	// A lazy unmount also reaches busy copies of the mount, such as Jellyfin's in Docker, so stopping with
 	// files open leaves no dead mount. It needs root; otherwise fall back to fusermount.
 	if err := syscall.Unmount(mount, syscall.MNT_DETACH); err != nil {
@@ -110,6 +111,20 @@ func unmountOnSignal(server *fuse.Server, mount string) {
 	}
 	// Open files keep a detached mount's connection alive, so don't wait for them.
 	time.AfterFunc(2*time.Second, func() { os.Exit(0) })
+}
+
+// logSettings logs the effective settings, without credentials.
+func logSettings(cfg sloflix.Config) {
+	jf := "off"
+	if cfg.JellyfinURL != "" {
+		jf = cfg.JellyfinURL + " under " + cfg.JellyfinPath
+	}
+	limits := ""
+	if cfg.LimitMovies > 0 || cfg.LimitShows > 0 {
+		limits = fmt.Sprintf(", limited to %d movies and %d shows", cfg.LimitMovies, cfg.LimitShows)
+	}
+	log.Printf("settings: cache %s, refresh %v, revalidate %v, probe cache %d, rate %g/s, concurrency %d, jellyfin scans %s%s",
+		cfg.CacheDir, cfg.Refresh, cfg.Revalidate, cfg.ProbeCache, cfg.Rate, cfg.Concurrency, jf, limits)
 }
 
 // envDefaults lets every flag be set from the environment: -probe-cache as SLOFLIX_PROBE_CACHE. The command

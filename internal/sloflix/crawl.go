@@ -44,7 +44,7 @@ func saveFailed() {
 	b, _ := json.Marshal(crawlFailed)
 	lookupMu.Unlock()
 	if err := writeFile(failedFile(), b); err != nil {
-		log.Printf("crawl: %v", err)
+		log.Printf("crawl: saving backoff state: %v", err)
 	}
 }
 
@@ -256,10 +256,10 @@ func revalidateSub(id int, m Meta) {
 	if changed, err := fetchSubtitle(m.Sub); err != nil {
 		log.Printf("crawl %d: %v", id, err)
 	} else if changed {
-		log.Printf("media %d: subtitle %q changed", id, m.Sub)
+		log.Printf("media %d changed: subtitle %q", id, m.Sub)
 		m.Changed = time.Now()
 		if err := writeMeta(id, m); err != nil {
-			log.Printf("crawl %d: %v", id, err)
+			log.Printf("media %d: saving meta: %v", id, err)
 		}
 	}
 }

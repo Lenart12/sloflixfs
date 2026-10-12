@@ -5,6 +5,7 @@ package fusefs
 import (
 	"context"
 	"log"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -39,7 +40,7 @@ func (d *dir) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut) s
 func (d *dir) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	children, err := d.list()
 	if err != nil {
-		log.Printf("readdir: %v", err)
+		log.Printf("readdir %s: %v", d.Path(nil), err)
 		return nil, syscall.EIO
 	}
 	var entries []fuse.DirEntry
@@ -59,7 +60,7 @@ func (d *dir) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 func (d *dir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	children, err := d.list()
 	if err != nil {
-		log.Printf("lookup %s: %v", name, err)
+		log.Printf("lookup %s: %v", filepath.Join(d.Path(nil), name), err)
 		return nil, syscall.EIO
 	}
 	for _, c := range children {
@@ -71,7 +72,7 @@ func (d *dir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.
 		}
 		n, err := c.node()
 		if err != nil {
-			log.Printf("lookup %s: %v", name, err)
+			log.Printf("lookup %s: %v", filepath.Join(d.Path(nil), name), err)
 			return nil, syscall.EIO
 		}
 		var a fuse.AttrOut

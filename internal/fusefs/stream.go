@@ -81,7 +81,7 @@ func (s *stream) open(off int64) error {
 			return nil
 		}
 		resp.Body.Close()
-		log.Printf("stream: %s, re-resolving", resp.Status)
+		log.Printf("stream %d: %s, re-resolving", s.id, resp.Status)
 	}
 	return errors.New("stream unavailable")
 }
@@ -99,13 +99,14 @@ func (s *stream) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadRes
 		}
 		if s.body == nil || off < s.pos || off-s.pos > skipMax {
 			if err := s.open(off); err != nil {
-				log.Printf("stream: %v", err)
+				log.Printf("stream %d: %v", s.id, err)
 				return nil, syscall.EIO
 			}
 			if off >= s.size { // the first response may have shown a smaller file
 				return fuse.ReadResultData(nil), 0
 			}
 		} else if err := s.skipTo(off); err != nil {
+			log.Printf("stream %d: skip to %d: %v", s.id, off, err)
 			s.close()
 			continue
 		}
@@ -118,7 +119,7 @@ func (s *stream) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadRes
 			s.served = true
 			return fuse.ReadResultData(dest), 0
 		}
-		log.Printf("stream: read at %d: %v", off, err)
+		log.Printf("stream %d: read at %d: %v", s.id, off, err)
 		s.close()
 	}
 	return nil, syscall.EIO

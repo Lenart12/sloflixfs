@@ -106,7 +106,7 @@ func login(p priority) (_ string, err error) {
 	}
 	token = r.Metadata.AccessToken
 	if err := writeFile(filepath.Join(cacheDir, "token"), []byte(token)); err != nil {
-		log.Printf("api: %v", err) // the token still works; it's just not kept across restarts
+		log.Printf("api: saving token: %v", err) // the token still works; it's just not kept across restarts
 	}
 	return token, nil
 }
