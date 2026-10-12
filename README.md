@@ -160,6 +160,37 @@ In Docker, set options as environment variables. The image sets the mount, the c
 
 ## How it works
 
+```mermaid
+flowchart LR
+    jellyfin["Jellyfin"]
+
+    subgraph sloflixfs
+        fusefs["fusefs<br/>FUSE filesystem"]
+        sloflix["sloflix<br/>API client, crawler"]
+        cache[("Disk cache<br/>listings, metadata,<br/>links, probe headers")]
+        dood["dood<br/>link extraction"]
+        cdn["cdn<br/>range requests, size probes"]
+        scan["jellyfin<br/>scan trigger"]
+    end
+
+    api["sloflix.com API"]
+    doodstream["DoodStream"]
+    servers["Video servers<br/>DoodStream CDN, Cloudflare R2"]
+
+    jellyfin -- "list, open, read" --> fusefs
+    fusefs -- "listings, metadata, links" --> sloflix
+    fusefs -- "video data" --> cdn
+    sloflix <--> cache
+    sloflix -- "catalog, sources" --> api
+    sloflix --> dood --> doodstream
+    sloflix -- "size checks, headers" --> cdn
+    cdn --> servers
+    sloflix -- "new titles" --> scan
+    scan -- "library scan" --> jellyfin
+```
+
+Directory listings are served from the disk cache only. Upstream is contacted by the background crawler, and when a file is opened and read.
+
 ### Crawler
 
 A title is listed only after the background crawler has checked that it plays. A check is one API call and one small CDN request for the file size, plus a DoodStream lookup for titles that have only a DoodStream embed. New titles are checked first, newest first, then every title is rechecked about once a week (`-revalidate`).
