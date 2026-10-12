@@ -7,36 +7,30 @@ import (
 	"time"
 )
 
-// DoodStream lookups have their own limit: playmogo.com (where every mirror redirects) allows 15 pass_md5
-// requests per IP per 5 minutes, then answers with RELOAD and a captcha for ~5 minutes (measured 2026-10-09).
-// The crawler leaves reserve of them for playback.
+// DoodStream allows Max lookups per IP per 5 minutes, then asks for a captcha for about 5 minutes. The
+// crawler leaves reserve of them for playback.
 const (
 	Max     = 15
 	reserve = 3
 )
 
 var (
-	Window = 5*time.Minute + 10*time.Second // the measured 5 minutes plus margin; a var for tests
-	mu     sync.Mutex
-	// DoodStream lookups within Window, oldest first; guarded by mu. A previous run (just restarted) may have
-	// used the limit, so the crawler's share starts used.
-	sent   = slices.Repeat([]time.Time{time.Now()}, Max-reserve)
-	lastLo time.Time // the crawler's last lookup; guarded by mu
-	// hiWaiting counts opens waiting for a slot; guarded by mu. hiWait bounds that wait: long
-	// enough for a scan's probes to queue up, short enough that an open doesn't hang. A var for tests.
-	hiWaiting int
-	hiWait    = time.Minute
+	Window = 5*time.Minute + 10*time.Second // DoodStream's 5 minutes plus a margin
+	hiWait = time.Minute                    // how long an open waits for a lookup slot
+
+	mu sync.Mutex
+	// sent holds the lookups within Window, oldest first. A process that just restarted may have used the
+	// limit, so the crawler's share starts used.
+	sent      = slices.Repeat([]time.Time{time.Now()}, Max-reserve)
+	lastLo    time.Time // the crawler's last lookup
+	hiWaiting int       // opens waiting for a slot
 )
 
-// pace spaces the crawler's lookups evenly over the window, at its share of it: 5m10s / (15-3) = 25.8s.
-// Bursts of 12 would be just as much within the limit, but leave the crawler idle (and the log silent) for
-// minutes, and would be the first thing to break if DoodStream ever penalised bursts.
+// pace spaces the crawler's lookups evenly over its share of the window, so it never bursts.
 func pace() time.Duration { return Window / (Max - reserve) }
 
-// take waits until a DoodStream lookup fits the window, then records it. A sliding window of 15 also
-// stays within a fixed window or token bucket of that size, whichever DoodStream uses. Playback (any open,
-// including Jellyfin's probes) waits at most hiWait, and fails at once if no slot frees up by then;
-// while it waits, the crawler holds back, so opens get the whole window.
+// take waits until a lookup fits the window, then records it. Playback waits at most hiWait, failing at
+// once if no slot frees up by then, and the crawler holds back while it waits.
 func take(playback bool) error {
 	deadline, waiting := time.Now().Add(hiWait), false
 	defer func() {

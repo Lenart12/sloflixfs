@@ -41,12 +41,12 @@ func (v *video) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, 
 		},
 		resized: func(size int64) {
 			sloflix.SetSize(v.id, size)
-			// Drop the kernel's cached attrs so it stops clamping reads to the old size. Async: invalidating
-			// from inside the read that's still in flight on this inode could deadlock.
+			// Drop the kernel's cached size, which clamps reads. Async, since invalidating from inside a read
+			// on this inode could deadlock.
 			go v.NotifyContent(-1, 0)
 		},
 	}
-	// A new title's start, saved by the crawler: Jellyfin's probe is served from it without resolving a link.
+	// Jellyfin's probe of a new title is served from its saved head, without resolving a link.
 	if m, ok := sloflix.Info(v.id); ok {
 		if f, n, ok := sloflix.OpenHead(v.id); ok {
 			s.size, s.head, s.headLen = m.Size, f, n

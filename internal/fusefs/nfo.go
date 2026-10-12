@@ -32,12 +32,10 @@ func dataImage(uri, base string, mtime time.Time) (child, bool) {
 	}}, true
 }
 
-// nfoChild renders sloflix's metadata as a Jellyfin/Kodi NFO, so titles TMDB can't match still get a plot,
-// genres and artwork. Jellyfin downloads http(s) image URLs itself; images sloflix embeds as data: URIs (which
-// Jellyfin rejects in an NFO) become poster/fanart sidecar files instead.
+// nfoChild renders sloflix's metadata as an NFO, so titles TMDB can't match still get a plot, genres and
+// artwork. Images embedded as data: URIs, which Jellyfin rejects in an NFO, become sidecar files.
 func nfoChild(file, root string, it sloflix.Item, plot string, mtime time.Time) []child {
-	// Title in Slovenian, as on sloflix. No originaltitle: sloflix only knows the Slovenian and English names,
-	// not the original-language one, so it's left for TMDB to fill when Jellyfin matches the item.
+	// No originaltitle: sloflix doesn't know it, so it's left for TMDB.
 	n := struct {
 		XMLName xml.Name
 		Title   string     `xml:"title"`

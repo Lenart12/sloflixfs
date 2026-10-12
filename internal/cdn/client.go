@@ -23,8 +23,8 @@ const referer = "https://player.sloflix.com/"
 // Client is the HTTP client for video servers and DoodStream.
 var Client = &http.Client{Transport: transport()}
 
-// transport has dial/TLS timeouts (from the default transport), plus a response header timeout.
-// No overall timeout: playback responses stream for hours.
+// transport adds a response header timeout to the default dial and TLS timeouts. There's no overall
+// timeout: playback responses stream for hours.
 func transport() *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.ResponseHeaderTimeout = 30 * time.Second
@@ -75,8 +75,7 @@ func do(req *http.Request) (*http.Response, error) {
 	return resp, Redact(err)
 }
 
-// Redact drops the query, which carries stream tokens, from a request error's URL, so logging the error
-// doesn't log a working link.
+// Redact drops the query from a request error's URL: it carries the stream token, which mustn't be logged.
 func Redact(err error) error {
 	var ue *url.Error
 	if errors.As(err, &ue) {

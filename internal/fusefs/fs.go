@@ -1,5 +1,5 @@
-// Package fusefs serves the sloflix catalog as a read-only FUSE filesystem in Jellyfin's layout: verified
-// titles only, with NFO and subtitle sidecars, and video files streamed from the CDN on demand.
+// Package fusefs serves the sloflix catalog as a read-only FUSE filesystem in Jellyfin's layout, with
+// videos streamed from the CDN on demand.
 package fusefs
 
 import (
@@ -16,8 +16,8 @@ type child struct {
 	name string
 	dir  bool
 	node func() (fs.InodeEmbedder, error)
-	// visible, if set, decides whether the child is listed. Readdir checks every child, Lookup only the one
-	// it found, so looking up one title doesn't read every title's meta.
+	// visible, if set, decides whether the child is listed. It's checked lazily, so a lookup doesn't read
+	// every title's meta.
 	visible func() bool
 }
 

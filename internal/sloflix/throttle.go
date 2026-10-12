@@ -13,7 +13,7 @@ const (
 )
 
 var (
-	slots chan struct{} // upstream lookups/fetches in flight, capped by -concurrency; set by Start
+	slots chan struct{} // upstream lookups and fetches in flight, capped by -concurrency
 	hiQ   = make(chan struct{})
 	loQ   = make(chan struct{})
 )
@@ -34,9 +34,9 @@ func throttleLoop(every time.Duration, hi, lo chan struct{}) {
 	}
 }
 
-// acquire takes a concurrency slot for a lookup or fetch and returns its release. Take it before waiting for
-// the rate limit so ticks aren't spent on requests that can't start. Playback bypasses the limit, so
-// slots held by stuck background requests can't stall it; it still waits for the rate limit.
+// acquire takes a concurrency slot and returns its release. Callers take it before waiting for the rate
+// limit, so ticks aren't spent on requests that can't start. Playback skips it, so background requests
+// stuck holding slots can't stall it.
 func acquire(p priority) func() {
 	if p == playback {
 		return func() {}

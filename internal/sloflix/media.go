@@ -18,23 +18,22 @@ import (
 )
 
 const (
-	// Stream links expire after 7.5–8h (measured 2026-10: 5 links, direct and embed, all valid at 7h30m and
-	// "error_expired" at 8h); a rejected link is re-resolved anyway.
+	// Stream links expire between 7h30 and 8h. A rejected link is re-resolved anyway.
 	urlTTL = 7*time.Hour + 30*time.Minute
-	// A title that used to play stays listed this long after upstream first says it's gone, so one wrong
-	// "gone" (an anti-bot page, a CDN hiccup) can't make Jellyfin drop it and its watch history.
+	// A title that used to play stays listed this long after upstream first says it's gone, so a glitch
+	// can't make Jellyfin drop it and its watch history.
 	goneGrace = 24 * time.Hour
-	// Playback failures are remembered this long, so a probe retrying a dead title doesn't refetch each time.
+	// Playback failures are remembered this long, so retries of a dead title don't refetch it.
 	playFailTTL = 5 * time.Minute
-	// minVideoSize is the smallest file treated as a video. Smaller ones are broken uploads (seen: 32 KB and
-	// 64 KB films, a 1.6 MB episode) that ffprobe can't read, so they're hidden like titles without a source.
+	// minVideoSize is the smallest file treated as a video. Smaller ones are broken uploads, hidden like
+	// titles without a source.
 	minVideoSize = 5 << 20
 )
 
-// errFailedRecently is a playback lookup's failure, logged when it happened, repeated within playFailTTL.
+// errFailedRecently repeats a playback lookup's failure within playFailTTL. It was logged when it happened.
 var errFailedRecently = errors.New("lookup failed recently")
 
-// Quiet reports whether err was already logged (errFailedRecently), so a caller doesn't log it again.
+// Quiet reports whether err was already logged.
 func Quiet(err error) bool { return errors.Is(err, errFailedRecently) }
 
 var (
@@ -43,26 +42,24 @@ var (
 	crawlFailed = map[int]crawlFail{} // failed crawler checks, kept apart so they don't block playback
 )
 
-// Meta is what we persist per playable item: size for getattr, subtitle for listing the .vtt.
-// Size 0 means no playable source was found. Changed is when the size or subtitle last changed, as seen by
-// a recheck, a stream's response (SetSize) or the crawler revalidating the subtitle; it bumps the mtime.
+// Meta is what's persisted per title. Size 0 means no playable source was found. Changed is when the size
+// or subtitle last changed, which bumps the files' mtime.
 type Meta struct {
 	Size    int64     `json:"size"`
 	Sub     string    `json:"sub"`
 	Plot    string    `json:"plot"`
 	Changed time.Time `json:"changed"`
-	Gone    time.Time `json:"gone,omitzero"` // when upstream first reported a listed title gone (see goneGrace)
-	// DeadCode is a DoodStream ID reported deleted. IDs aren't reused, so while sloflix keeps returning it,
-	// rechecks of a hidden title skip DoodStream.
+	Gone    time.Time `json:"gone,omitzero"` // when upstream first reported a listed title gone
+	// DeadCode is a DoodStream code reported deleted. Codes aren't reused, so rechecks skip DoodStream while
+	// sloflix still returns it.
 	DeadCode string `json:"dead_code,omitempty"`
-	// URL is the last stream link and URLAt when it was resolved, used for urlTTL, also after a restart.
+	// URL is the last stream link and URLAt when it was resolved.
 	URL   string    `json:"url,omitempty"`
 	URLAt time.Time `json:"url_at,omitzero"`
 }
 
-// sharedErr is a failure every title shares: sloflix's API or DoodStream (down, a captcha, the lookup
-// limit), or the cache disk. Unlike a dead video server or a missing source, it's no reason to check a
-// title less often.
+// sharedErr is a failure all titles share, of sloflix's API, DoodStream or the cache disk. It's no reason
+// to check a title less often.
 type sharedErr struct{ error }
 
 func (e sharedErr) Unwrap() error { return e.error }
@@ -74,8 +71,8 @@ type source struct {
 	Sub    *string `json:"subtitle_location"`
 }
 
-// pickSource prefers sloflix's own direct link (stream); otherwise it returns the first DoodStream embed's
-// video code, to extract a link from. sub is the chosen source's subtitle.
+// pickSource returns sloflix's direct link if there is one, otherwise the first DoodStream video code, and
+// the chosen source's subtitle.
 func pickSource(sources []source) (stream, doodCode string, sub *string) {
 	for _, s := range sources {
 		u, err := url.Parse(s.Source)
@@ -85,7 +82,7 @@ func pickSource(sources []source) (stream, doodCode string, sub *string) {
 		if u.Host == "player.sloflix.com" {
 			return strings.TrimSpace(u.Query().Get("source")), "", s.Sub // some carry a trailing newline
 		}
-		// Embed (/e/) or download-page (/d/) links; the mirror serves either code under /e/.
+		// Embed (/e/) or download (/d/) links: the mirror serves either code under /e/.
 		if doodCode == "" && strings.Contains(strings.ToLower(s.Name), "doodstream") && (strings.HasPrefix(u.Path, "/e/") || strings.HasPrefix(u.Path, "/d/")) {
 			doodCode, sub = path.Base(u.Path), s.Sub
 		}
@@ -93,7 +90,7 @@ func pickSource(sources []source) (stream, doodCode string, sub *string) {
 	return "", doodCode, sub
 }
 
-// describeSources lists sources as name@host, for the error of a title without a usable one.
+// describeSources lists sources as name@host.
 func describeSources(sources []source) []string {
 	var out []string
 	for _, s := range sources {
@@ -120,12 +117,11 @@ func resolve(id int, p priority) (string, Meta, error) {
 		m.Sub = *sub
 	}
 	prev, _, hasPrev := readMeta(id)
-	// missing means the source exists but its video is gone, which is persisted as no source; other errors
-	// (dead hosts, timeouts) are transient.
+	// missing means the video is gone, which is recorded. Other errors are transient.
 	var missing error
 	if stream == "" && code != "" {
 		stream, missing, err = doodStream(code, prev, func() error {
-			// Give up the concurrency slot while queued for DoodStream, so lookups that don't need it go on.
+			// Free the concurrency slot while queued for DoodStream.
 			release()
 			defer func() { release = acquire(p) }()
 			return takeDood(p)
@@ -138,8 +134,8 @@ func resolve(id int, p priority) (string, Meta, error) {
 		}
 	}
 	if stream != "" && p == playback && prev.Size > 0 {
-		// Playback skips the size probe: the stream checks the size on every response (stream.open). Nothing
-		// was verified, so a title in its goneGrace period stays in it for the crawler to recheck.
+		// Playback skips the probe: the stream checks the size on every response. Nothing was verified, so
+		// a title in goneGrace stays in it.
 		m.Size, m.Gone = prev.Size, prev.Gone
 	} else if stream != "" {
 		if m.Size, missing, err = measure(id, stream); err != nil {
@@ -176,8 +172,7 @@ func details(id int, p priority) (titleDetails, error) {
 	return d, err
 }
 
-// noSource is the error for a title without a playable source: the reason the chosen source failed
-// (missing), or the sources it has.
+// noSource is the error for a title without a playable source.
 func noSource(missing error, sources []source) error {
 	if missing != nil {
 		return fmt.Errorf("no direct source: %w", missing)
@@ -185,10 +180,9 @@ func noSource(missing error, sources []source) error {
 	return fmt.Errorf("no direct source (got %d: %q)", len(sources), describeSources(sources))
 }
 
-// doodStream extracts a stream link from DoodStream video code. missing is set if DoodStream reports the
-// video deleted, err for any other failure.
+// doodStream gets a stream link for a DoodStream video code. missing is set if the video was deleted.
 func doodStream(code string, prev Meta, take func() error) (stream string, missing, err error) {
-	if code == prev.DeadCode && prev.Size == 0 { // a title in goneGrace (Size > 0) is verified again
+	if code == prev.DeadCode && prev.Size == 0 { // titles in goneGrace are verified again
 		return "", fmt.Errorf("DoodStream %s: %w", code, dood.ErrGone), nil
 	}
 	stream, err = dood.URL(code, take)
@@ -257,11 +251,10 @@ func noteChange(id int, prev Meta, m *Meta) {
 	}
 }
 
-// recordPlayable records a verified title. The crawler marks a new one for saveHeads, since Jellyfin will
-// probe it.
+// recordPlayable records a verified title, and marks a new one for saveHeads.
 func recordPlayable(id int, p priority, isNew bool, m Meta) error {
 	if err := writeMeta(id, m); err != nil {
-		if p == background { // unrecorded, the title isn't listed: retry it later
+		if p == background { // not listed: the crawler retries it
 			return sharedErr{err}
 		}
 		log.Printf("media %d: %v", id, err) // the link still plays
@@ -272,9 +265,8 @@ func recordPlayable(id int, p priority, isNew bool, m Meta) error {
 	return nil
 }
 
-// Info returns a title's persisted meta and whether it's listed: verified by the crawler as playable. A
-// playable title stays listed through transient errors and upstream reporting it gone within goneGrace
-// (resolve keeps its size), so Jellyfin doesn't drop it and its watch history over a glitch.
+// Info returns a title's persisted meta and whether it's listed, which it is once the crawler verified it
+// as playable.
 func Info(id int) (Meta, bool) {
 	m, _, _ := readMeta(id)
 	return m, m.Size >= minVideoSize
@@ -299,7 +291,7 @@ func readMeta(id int) (Meta, time.Time, bool) {
 	return m, st.ModTime(), json.Unmarshal(b, &m) == nil
 }
 
-// SetSize records a size seen by a stream that differs from the cached one: the upstream file was replaced.
+// SetSize records a new size a stream saw: the upstream file was replaced.
 func SetSize(id int, size int64) {
 	m, _, _ := readMeta(id)
 	log.Printf("media %d changed: size %d -> %d", id, m.Size, size)
@@ -307,11 +299,11 @@ func SetSize(id int, size int64) {
 	if err := writeMeta(id, m); err != nil {
 		log.Printf("media %d: %v", id, err)
 	}
-	os.Remove(headFile(id)) // it's from the old file
+	os.Remove(headFile(id))
 }
 
-// StreamURL returns the stream URL in meta and its size, or fresh ones if force is set or it is older than urlTTL.
-// Resolving also refreshes the item's persisted meta, so opening a file revalidates its size and subtitle.
+// StreamURL returns title id's stream URL and size, resolving a new URL if force is set or the saved one
+// is older than urlTTL.
 func StreamURL(id int, force bool) (string, int64, error) {
 	if m, _, _ := readMeta(id); !force && m.URL != "" && time.Since(m.URLAt) < urlTTL {
 		return m.URL, m.Size, nil

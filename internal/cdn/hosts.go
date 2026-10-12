@@ -22,8 +22,8 @@ type hostCheck struct {
 	fails int // consecutive failures
 }
 
-// hostStatus returns a host's remembered outcome while it's fresh (hostTTL): a success, or two or more
-// failures in a row. A single failure (e.g. a DNS blip) isn't remembered, so the next request tries again.
+// hostStatus returns a host's remembered outcome within hostTTL: a success, or two or more failures in a
+// row. A single failure, such as a DNS blip, is retried at once.
 func hostStatus(addr string) (ok, known bool) {
 	hostMu.Lock()
 	defer hostMu.Unlock()
@@ -54,9 +54,8 @@ func hostPort(u *url.URL) string {
 	return net.JoinHostPort(u.Hostname(), port)
 }
 
-// Reachable reports whether an artwork URL's host accepts connections (remembered per host, see hostStatus).
-// Jellyfin aborts a whole metadata refresh when an image download times out, so a dead host must not
-// end up in an NFO.
+// Reachable reports whether an artwork URL's host accepts connections. Jellyfin aborts a whole metadata
+// refresh when an image download times out, so a dead host must stay out of NFOs.
 func Reachable(uri string) bool {
 	u, err := url.Parse(uri)
 	if err != nil || u.Hostname() == "" {

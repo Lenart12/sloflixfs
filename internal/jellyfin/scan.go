@@ -47,8 +47,8 @@ func (s *Scanner) Add() {
 	s.mu.Unlock()
 }
 
-// Scan starts a scan of the libraries under the path, unless no title was added since the last one, that
-// was under cooldown ago, or Jellyfin is already scanning.
+// Scan starts a scan of the libraries under the path. It skips it if no title was added since the last
+// scan, the last scan was under cooldown ago, or Jellyfin is already scanning.
 func (s *Scanner) Scan() {
 	if s == nil || !s.busy.TryLock() {
 		return

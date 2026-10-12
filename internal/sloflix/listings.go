@@ -23,9 +23,9 @@ var (
 	mem    = map[string]memEntry{}
 	shrunk = map[string]time.Time{} // listing key -> when it was first seen shrunk
 
-	// fetchMu holds one lock per listing key, so concurrent requests for a listing share one fetch while
-	// other listings (and their disk reads) don't wait behind it.
-	fetchMu sync.Map // listing key -> *sync.Mutex
+	// fetchMu holds a *sync.Mutex per listing key, so concurrent requests for a listing share one fetch
+	// without blocking other listings.
+	fetchMu sync.Map
 )
 
 type memEntry struct {
@@ -196,15 +196,14 @@ func peek[T any](key string) (T, bool) {
 	return e.v.(T), true
 }
 
-// CachedCatalog returns the catalog of kind from the cache, however old, without
-// fetching, so listing the filesystem never waits on upstream. The crawler keeps it fresh. Likewise
-// CachedShow and CachedEpisodes.
+// CachedCatalog returns the catalog of kind from the cache, however old, so listing the filesystem never
+// waits on upstream. The crawler keeps it fresh.
 func CachedCatalog(kind Kind) []Item { v, _ := peek[[]Item](catalogKey(kind)); return limit(kind, v) }
 
-// CachedShow returns a show's seasons and plot from the cache (see CachedCatalog).
+// CachedShow returns a show's seasons and plot from the cache, however old.
 func CachedShow(showID int) ShowInfo { v, _ := peek[ShowInfo](showKey(showID)); return v }
 
-// CachedEpisodes returns a season's episodes from the cache (see CachedCatalog).
+// CachedEpisodes returns a season's episodes from the cache, however old.
 func CachedEpisodes(showID, season int) []Item {
 	v, _ := peek[[]Item](episodesKey(showID, season))
 	return v

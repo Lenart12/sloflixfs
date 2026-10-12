@@ -22,13 +22,14 @@ import (
 // maxPage bounds a player page read, far above the real ~0.1 MB.
 const maxPage = 4 << 20
 
-var (
-	// Many titles only carry a DoodStream embed link, often on a dead mirror domain. Video codes work on any
-	// mirror, so embeds are opened here instead.
-	// doodstream.com redirects to whichever mirror is currently live.
-	Mirror = "https://doodstream.com/e/"
+// Mirror is where embeds are opened. Sloflix's embed links often point at dead mirror domains, but video
+// codes work on any mirror, and doodstream.com redirects to a live one.
+var Mirror = "https://doodstream.com/e/"
 
-	ErrGone   = errors.New("video not found on DoodStream")
+// ErrGone means DoodStream reports the video deleted.
+var ErrGone = errors.New("video not found on DoodStream")
+
+var (
 	passMD5   = regexp.MustCompile(`/pass_md5/[^'"]+`)
 	htmlTitle = regexp.MustCompile(`<title>([^<]*)`)
 )
@@ -41,8 +42,7 @@ func URL(code string, take func() error) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// Only the pass_md5 request counts toward DoodStream's limit (player pages, deleted and unknown videos
-	// don't; measured 2026-10-09), so the slot is taken only now.
+	// Only the pass_md5 request counts toward DoodStream's limit, so the slot is taken only now.
 	waitStart := time.Now()
 	if err := take(); err != nil {
 		return "", err
@@ -62,7 +62,7 @@ func URL(code string, take func() error) (string, error) {
 	return link(string(base), string(pass)), nil
 }
 
-// player opens the player page and returns its pass_md5 path and (redirected) URL.
+// player opens the player page and returns its pass_md5 path and its URL after redirects.
 func player(code string) ([]byte, *url.URL, error) {
 	log.Printf("dood: GET %s", code)
 	page, resp, err := get(Mirror+code, "https://www.sloflix.com/")
@@ -72,8 +72,7 @@ func player(code string) ([]byte, *url.URL, error) {
 	if p := passMD5.Find(page); p != nil {
 		return p, resp.Request.URL, nil
 	}
-	// Only an explicit "Video not found" means deleted; anything else (anti-bot or rate-limit pages)
-	// is transient, so the title isn't persisted as gone.
+	// Only an explicit "Video not found" means deleted. Anti-bot and rate-limit pages are transient.
 	var title string
 	if m := htmlTitle.FindSubmatch(page); m != nil {
 		title = string(m[1])

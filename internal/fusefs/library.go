@@ -21,8 +21,7 @@ func NewRoot() *dir {
 	}}
 }
 
-// catalogDir lists the catalog of kind, newest first. Only titles that pass visible are listed; they're
-// checked lazily (see child.visible).
+// catalogDir lists the catalog of kind, newest first, showing only titles that pass visible.
 func catalogDir(kind sloflix.Kind, visible func(id int) bool, itemDir func(it sloflix.Item, name string) func() ([]child, error)) func() ([]child, error) {
 	return func() ([]child, error) {
 		items := sloflix.CachedCatalog(kind)
@@ -43,8 +42,7 @@ func movieVisible(id int) bool {
 	return ok
 }
 
-// showVisible reports whether any of a show's episodes is playable. It reads cached listings only, so
-// listing Shows never waits on upstream, even right after a restart before the crawler's first pass.
+// showVisible reports whether any of a show's episodes is playable, from cached listings only.
 func showVisible(id int) bool {
 	si := sloflix.CachedShow(id)
 	for _, s := range si.Seasons {
@@ -98,8 +96,8 @@ func seasonDir(showID, season int, showName string) func() ([]child, error) {
 	}
 }
 
-// mediaFiles lists the video file and, if present, its subtitle for item id under base name, and returns
-// its meta. Items the crawler hasn't verified as playable are left out.
+// mediaFiles lists the video and subtitle files of title id under base name, if it's listed, and returns
+// its meta.
 func mediaFiles(id int, base string, mtime time.Time) ([]child, sloflix.Meta) {
 	m, ok := sloflix.Info(id)
 	if !ok {

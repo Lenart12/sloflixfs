@@ -18,7 +18,7 @@ import (
 	"github.com/Lenart12/sloflixfs/internal/web"
 )
 
-// apiBase is sloflix's API, swapped for a test server in tests.
+// apiBase is sloflix's API.
 var apiBase = "https://api.sloflix.com/v1"
 
 // startTime stands in for titles without a valid creation time.
@@ -68,8 +68,8 @@ type ShowInfo struct {
 	Plot    string `json:"media_description"`
 }
 
-// login returns the API token: cached in memory or on disk, or from logging in. A failed login is
-// remembered for loginRetry, so wrong credentials don't send a login request with every API call.
+// login returns the API token from memory, disk or a new login. A failed login is remembered for
+// loginRetry, so bad credentials don't cost a request per API call.
 func login(p priority) (_ string, err error) {
 	tokenMu.Lock()
 	defer tokenMu.Unlock()

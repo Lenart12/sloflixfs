@@ -9,7 +9,7 @@ import (
 	"github.com/Lenart12/sloflixfs/internal/sloflix"
 )
 
-// name is the item's folder/file name: English if available (it matches TMDB best).
+// name is the item's file name: the English one if available, which matches TMDB best.
 func name(it sloflix.Item) string {
 	if it.NameEn != "" {
 		return clean(it.NameEn)
@@ -40,9 +40,8 @@ func title(it sloflix.Item) string {
 }
 
 // uniqNames names each item, appending " [id]" to all but one of the items sharing a name. The plain name
-// goes to the oldest (lowest ID) playable one, so a newly added duplicate gets the suffix while a re-upload
-// of a dead title takes over its path; either way the path Jellyfin keeps watch history under stays.
-// playable is only checked for items sharing a name.
+// goes to the oldest playable one, so the path Jellyfin keeps watch history under stays when a duplicate
+// is added or a dead title re-uploaded.
 func uniqNames(items []sloflix.Item, name func(sloflix.Item) string, playable func(id int) bool) map[int]string {
 	groups := map[string][]sloflix.Item{}
 	for _, it := range items {

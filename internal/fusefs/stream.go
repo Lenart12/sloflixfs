@@ -18,11 +18,10 @@ import (
 	"github.com/Lenart12/sloflixfs/internal/sloflix"
 )
 
-// Forward gaps up to this size are read and discarded instead of opening a new connection.
+// skipMax is the largest forward gap read and discarded rather than opening a new connection.
 const skipMax = 1 << 20
 
-// readTimeout bounds one read from the CDN. A stalled connection is closed and reopened instead of hanging
-// the read (and Release, which waits for it) until TCP gives up.
+// readTimeout bounds one read from the CDN, after which a stalled connection is reopened.
 var readTimeout = 30 * time.Second
 
 // stream serves reads from a single HTTP Range response, reopening it only on seeks.
@@ -31,11 +30,11 @@ type stream struct {
 	mu      sync.Mutex
 	size    int64
 	resolve func(force bool) (string, error)
-	resized func(size int64) // called when the first response shows the upstream file has a new size
+	resized func(size int64) // called when a response shows the upstream file has a new size
 	served  bool             // data was already returned, so a size change would splice two files
 	body    io.ReadCloser
 	pos     int64
-	head    *os.File // the file's start, if cached for Jellyfin's probe (saveHead); removed on close
+	head    *os.File // the saved head for Jellyfin's probe, if any
 	headLen int64
 
 	conns  int   // connections opened, for the summary logged on close
@@ -60,7 +59,7 @@ func (s *stream) open(off int64) error {
 		}
 		resp, err := cdn.GetRange(context.Background(), u, off)
 		if err != nil {
-			return err // the video server is unreachable: a new link would most likely point to it again
+			return err // a new link would most likely point to the same dead server
 		}
 		if resp.StatusCode == http.StatusPartialContent {
 			if size := cdn.RangeSize(resp); size > 0 && size != s.size {
@@ -69,7 +68,7 @@ func (s *stream) open(off int64) error {
 					return fmt.Errorf("upstream file changed from %d to %d bytes while open", s.size, size)
 				}
 				s.size = size
-				if s.head != nil { // it's the old file's start (resized removes the file)
+				if s.head != nil { // it's the old file's
 					s.head.Close()
 					s.head = nil
 				}

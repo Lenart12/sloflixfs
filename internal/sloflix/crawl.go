@@ -16,8 +16,7 @@ import (
 	"github.com/Lenart12/sloflixfs/internal/jellyfin"
 )
 
-// crawlMaxWait caps the backoff of a title the crawler keeps failing on (mostly dead CDN servers): failTTL
-// doubled with each failure in a row, 7 times.
+// crawlMaxWait caps the backoff of a title the crawler keeps failing on: failTTL doubled 7 times.
 const crawlMaxWait = 128 * time.Hour
 
 type crawlFail struct {
@@ -25,10 +24,10 @@ type crawlFail struct {
 	Wait time.Duration // failTTL, doubled with each failure in a row up to crawlMaxWait
 }
 
-// listingBudget is how long a queue rebuild spends fetching show listings (see crawlQueue). A var for tests.
+// listingBudget is how long a queue rebuild spends refreshing show listings.
 var listingBudget = 5 * time.Minute
 
-// failedFile keeps crawlFailed across restarts, so titles on dead video servers aren't all retried at once.
+// failedFile keeps crawlFailed across restarts, so failing titles aren't all retried at once.
 func failedFile() string { return filepath.Join(cacheDir, "failed.json") }
 
 func loadFailed() {
@@ -38,7 +37,7 @@ func loadFailed() {
 	lookupMu.Unlock()
 }
 
-// saveFailed writes crawlFailed, dropping titles not retried long after they were due: gone from the catalog.
+// saveFailed writes crawlFailed, dropping titles long overdue: they left the catalog.
 func saveFailed() {
 	lookupMu.Lock()
 	maps.DeleteFunc(crawlFailed, func(_ int, f crawlFail) bool { return time.Since(f.Next) > crawlMaxWait })
@@ -49,9 +48,9 @@ func saveFailed() {
 	}
 }
 
-// due reports whether the crawler should check id now, and in which order: bucket 0 is never checked,
-// 1 a title without a source or in its goneGrace period (rechecked after refreshTTL), 2 a playable one
-// (rechecked after metaTTL). written is when its meta was last written.
+// due reports whether the crawler should check id now, and its bucket: 0 for a new title, 1 for one
+// without a source or in goneGrace (rechecked after refreshTTL), 2 for a playable one (after metaTTL).
+// written is when its meta was last written.
 func due(id int) (bucket int, written time.Time, ok bool) {
 	lookupMu.Lock()
 	recent := time.Now().Before(crawlFailed[id].Next)
@@ -70,18 +69,16 @@ func due(id int) (bucket int, written time.Time, ok bool) {
 	}
 }
 
-// Crawl checks titles in the background, forever, so listings only show playable titles and never wait on
-// upstream: new titles first (newest first), then rechecks (see due), oldest first. This also catches
-// changed or removed sources and subtitles added or edited upstream for titles nobody plays. The rate
-// limits pace it; DoodStream's leaves a reserve for playback (dood.TakeBackground). Workers beyond -concurrency (which
-// still caps requests in flight) can wait for DoodStream without holding up titles that don't need it.
+// Crawl checks titles in the background forever, so listings only show playable titles and never wait on
+// upstream. New titles go first, newest first, then rechecks, least recent first. The extra dood.Max
+// workers wait for DoodStream without holding up titles that don't need it.
 func Crawl() {
 	for {
 		go saveHeads()
 		queue := crawlQueue()
-		saveFailed() // the previous round's failures
-		go jf.Scan() // at most hourly, and only after titles were newly listed
-		// Rebuild at most every 10 minutes, so newly listed titles don't wait behind a long recheck queue.
+		saveFailed()
+		go jf.Scan()
+		// Rebuild every 10 minutes, so new titles don't wait behind a long recheck queue.
 		next := time.Now().Add(10 * time.Minute)
 		ids := make(chan int)
 		var wg sync.WaitGroup
@@ -104,8 +101,7 @@ func Crawl() {
 	}
 }
 
-// crawlQueue walks the catalog (the only place its listings are refreshed; readdir serves them cached) and
-// returns the titles due for a check, in order.
+// crawlQueue refreshes the catalog and returns the titles due for a check, in order.
 func crawlQueue() []int {
 	var tasks []crawlTask
 	add := func(id int, created time.Time) {
@@ -127,9 +123,7 @@ func crawlQueue() []int {
 	if err != nil {
 		log.Printf("crawl: %v", err)
 	}
-	// Show and season listings are fetched for at most listingBudget per rebuild, newest shows first; the
-	// rest come from the cache (or wait, if never fetched) until a later rebuild. So with an empty cache, or
-	// when many expire at once, titles are checked between batches of the ~1500 listings, not after all.
+	// Refreshing all ~1500 show listings takes hours, so titles are checked between batches.
 	for _, ep := range episodeList(limit(Shows, shows), time.Now().Add(listingBudget)) {
 		add(ep.ID, ep.CreatedAt())
 	}
@@ -161,14 +155,14 @@ func episodeList(shows []Item, deadline time.Time) []Item {
 	return out
 }
 
-// crawlTask is a title due for a check: its due bucket, and when it was created (bucket 0) or last checked.
+// crawlTask is a title due for a check, with its bucket and when it was created (bucket 0) or last checked.
 type crawlTask struct {
 	id, bucket int
 	at         time.Time
 }
 
-// order sorts tasks by bucket, new titles newest first and rechecks least recently checked first, and
-// returns their IDs.
+// order sorts tasks by bucket, new titles newest first and rechecks least recent first, and returns their
+// IDs.
 func order(tasks []crawlTask) []int {
 	slices.SortFunc(tasks, func(a, b crawlTask) int {
 		if a.bucket != b.bucket {
@@ -195,7 +189,7 @@ func order(tasks []crawlTask) []int {
 // jf scans Jellyfin's libraries once the crawler lists new titles; nil if off.
 var jf *jellyfin.Scanner
 
-// newlyListed counts a title for Jellyfin's next scan, and scans now if the probe cache is half full, so new
+// newlyListed counts a title for Jellyfin's next scan. It scans now if the probe cache is half full, so new
 // titles keep getting heads.
 func newlyListed() {
 	if jf == nil {
@@ -211,8 +205,7 @@ func newlyListed() {
 func crawl(id int) {
 	defer func() {
 		if r := recover(); r != nil {
-			// A bug: keep the title out for crawlMaxWait, also across restarts, rather than crash (unmounting
-			// the library) and hit it again after every restart.
+			// A bug: skip the title for crawlMaxWait, even across restarts, rather than crash and unmount.
 			log.Printf("crawl %d: panic: %v\n%s", id, r, debug.Stack())
 			lookupMu.Lock()
 			crawlFailed[id] = crawlFail{Next: time.Now().Add(crawlMaxWait), Wait: crawlMaxWait}
@@ -225,7 +218,7 @@ func crawl(id int) {
 	}
 	_, wasListed := Info(id)
 	_, m, err := resolve(id, background)
-	if err == nil && !wasListed { // resolve succeeds only for a playable title: it's newly listed
+	if err == nil && !wasListed {
 		newlyListed()
 	}
 	backoff(id, err)
@@ -236,9 +229,8 @@ func crawl(id int) {
 	revalidateSub(id, m)
 }
 
-// backoff records a check's outcome. Titles that keep failing on their own (a dead video server can stay
-// dead for days, a missing source rarely comes back) wait longer each time; after a failure every title
-// shares, the title is retried in failTTL.
+// backoff records a check's outcome. A title that keeps failing on its own, such as on a dead video server,
+// waits twice as long each time. After a failure all titles share, it's retried in failTTL.
 func backoff(id int, err error) {
 	lookupMu.Lock()
 	defer lookupMu.Unlock()

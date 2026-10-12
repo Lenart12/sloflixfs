@@ -1,5 +1,5 @@
-// Package sloflix is the upstream side of sloflixfs: the sloflix.com API and its on-disk caches, DoodStream
-// and CDN access with their rate limits, per-title metadata, and the background crawler that verifies titles.
+// Package sloflix is the upstream side of sloflixfs: the sloflix.com API with its on-disk caches, per-title
+// metadata, and the background crawler that verifies titles.
 package sloflix
 
 import (
@@ -10,7 +10,7 @@ import (
 	"github.com/Lenart12/sloflixfs/internal/jellyfin"
 )
 
-// Config sets up the upstream side (see Start).
+// Config holds the settings Start applies.
 type Config struct {
 	CacheDir           string
 	Refresh            time.Duration // how long listings are cached before the crawler refetches them
@@ -46,7 +46,7 @@ func Start(cfg Config) error {
 	jf = jellyfin.New(cfg.JellyfinURL, cfg.JellyfinKey, cfg.JellyfinPath)
 	slots = make(chan struct{}, cfg.Concurrency)
 	go throttleLoop(time.Duration(float64(time.Second)/cfg.Rate), hiQ, loQ)
-	os.RemoveAll(filepath.Join(cacheDir, "subs")) // before v0.4.5, named by upstream's file name
+	os.RemoveAll(filepath.Join(cacheDir, "subs")) // the old subtitle cache, named by upstream's file names
 	for _, d := range []string{"json", "meta", "subtitles", "heads", "want"} {
 		if err := os.MkdirAll(filepath.Join(cacheDir, d), 0755); err != nil {
 			return err
@@ -56,21 +56,21 @@ func Start(cfg Config) error {
 	return nil
 }
 
-// Login logs in (or loads the cached token) once, so bad credentials fail at startup instead of on every
+// Login logs in, or loads the cached token, so bad credentials fail at startup rather than on every
 // filesystem operation.
 func Login() error {
 	_, err := login(background)
 	return err
 }
 
-// writeFile replaces name atomically: a concurrent reader (a listing) never sees it empty or half-written,
-// and a failed write (a full disk) leaves the old content.
+// writeFile replaces name atomically, so a reader never sees it half-written and a failed write keeps the
+// old content.
 func writeFile(name string, b []byte) error {
 	f, err := os.CreateTemp(filepath.Dir(name), ".tmp-")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name()) // after a successful rename there's nothing left to remove
+	defer os.Remove(f.Name()) // a no-op after the rename
 	if _, err := f.Write(b); err != nil {
 		f.Close()
 		return err

@@ -100,21 +100,20 @@ func unmountOnSignal(server *fuse.Server, mount string) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
 	<-sig
-	// Lazy unmount first: unlike a plain one it also propagates to busy copies of the mount (the host's and
-	// Jellyfin's in Docker), so stopping while files are open doesn't leave a dead mount behind. It needs
-	// root; otherwise fall back to fusermount.
+	// A lazy unmount also reaches busy copies of the mount, such as Jellyfin's in Docker, so stopping with
+	// files open leaves no dead mount. It needs root; otherwise fall back to fusermount.
 	if err := syscall.Unmount(mount, syscall.MNT_DETACH); err != nil {
 		if err := server.Unmount(); err != nil {
 			log.Printf("unmount: %v", err)
 		}
 		return
 	}
-	// Files still open keep a detached mount's connection (and server.Wait) alive; don't wait for them.
+	// Open files keep a detached mount's connection alive, so don't wait for them.
 	time.AfterFunc(2*time.Second, func() { os.Exit(0) })
 }
 
-// envDefaults lets every flag also be set from the environment, as SLOFLIX_ and the flag name in upper case
-// with - as _ (-probe-cache: SLOFLIX_PROBE_CACHE). The command line wins over the environment.
+// envDefaults lets every flag be set from the environment: -probe-cache as SLOFLIX_PROBE_CACHE. The command
+// line wins.
 func envDefaults(fset *flag.FlagSet, getenv func(string) string) error {
 	var err error
 	fset.VisitAll(func(f *flag.Flag) {

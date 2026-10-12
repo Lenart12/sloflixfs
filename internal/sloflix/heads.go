@@ -15,7 +15,7 @@ import (
 	"github.com/Lenart12/sloflixfs/internal/mp4"
 )
 
-// fetchHead saves the start of title id's file from stream (see saveHead), if the file is still size bytes.
+// fetchHead saves the head of title id's file from stream, if the file is still size bytes.
 func fetchHead(id int, stream string, size int64) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute) // up to ~70 MB, usually ~16
 	defer cancel()
@@ -24,28 +24,28 @@ func fetchHead(id int, stream string, size int64) error {
 		return err
 	}
 	defer resp.Body.Close()
-	if got := cdn.RangeSize(resp); got != size { // replaced or gone since the crawl: the probe streams it instead
+	if got := cdn.RangeSize(resp); got != size {
 		return fmt.Errorf("file is %d bytes, was %d (%s)", got, size, resp.Status)
 	}
 	return saveHead(id, resp.Body)
 }
 
 const (
-	// headSlack is what Jellyfin's probe reads past the MP4 index: Jellyfin passes ffprobe no -probesize,
-	// so its default of 5 MB applies, plus up to 1 MiB of kernel readahead (MaxReadAhead), plus margin.
+	// headSlack is what Jellyfin's probe reads past the MP4 index: ffprobe's default 5 MB probe size, 1 MiB
+	// of kernel readahead and a margin.
 	headSlack = 7 << 20
 	headMax   = 64 << 20 // an index this far in means it isn't a sane MP4 start
 	headTTL   = 3 * 24 * time.Hour
-	headLead  = time.Hour // how long before urlTTL saveHeads saves a head; above the crawler's rebuild interval
+	headLead  = time.Hour // how long before urlTTL a head is saved; longer than a crawler round
 )
 
-// headFile is where a title's probe head is saved (see saveHead).
+// headFile is where a title's head is saved.
 func headFile(id int) string { return filepath.Join(cacheDir, "heads", fmt.Sprint(id)) }
 
-// wantFile marks a new title Jellyfin hasn't probed yet (see saveHeads).
+// wantFile marks a new title Jellyfin hasn't probed yet.
 func wantFile(id int) string { return filepath.Join(cacheDir, "want", fmt.Sprint(id)) }
 
-// OpenHead opens title id's saved start (see saveHead), if it has one, and returns its length.
+// OpenHead opens title id's saved head, if it has one, and returns its length.
 func OpenHead(id int) (*os.File, int64, bool) {
 	f, err := os.Open(headFile(id))
 	if err != nil {
@@ -59,8 +59,8 @@ func OpenHead(id int) (*os.File, int64, bool) {
 	return f, st.Size(), true
 }
 
-// Probed records that title id was opened: Jellyfin probes a file once, later opens stream it, so neither
-// its saved start nor a later one (saveHeads) is needed.
+// Probed records that title id was opened. Jellyfin probes a file only once, so its head is no longer
+// needed.
 func Probed(id int) {
 	os.Remove(headFile(id))
 	os.Remove(wantFile(id))
@@ -68,9 +68,8 @@ func Probed(id int) {
 
 var headBusy sync.Mutex // one saveHeads at a time
 
-// saveHeads saves the start of new titles Jellyfin hasn't probed while their stream link is about to
-// expire. Until then a probe uses the link; after, it would need a new lookup (for an embed-only title a
-// DoodStream one, which a scan probing many titles runs out of). It also removes heads never probed.
+// saveHeads saves the heads of new titles Jellyfin hasn't probed yet whose stream link is about to expire,
+// so the probe needs no new lookup, and removes heads never probed.
 func saveHeads() {
 	if !headBusy.TryLock() {
 		return
@@ -92,29 +91,27 @@ func saveHeads() {
 		}
 		if m.URL != "" && age < urlTTL && headCount() < probeCache {
 			if err := fetchHead(id, m.URL, m.Size); err != nil {
-				log.Printf("media %d: no probe cache: %v", id, err) // Jellyfin's probe streams it instead
+				log.Printf("media %d: no probe cache: %v", id, err)
 			}
 		}
 		os.Remove(wantFile(id))
 	}
 }
 
-// headCount is the number of saved heads, bounded by -probe-cache so they can't fill the disk before
-// Jellyfin's next scan probes (and removes) them.
+// headCount is the number of saved heads, which -probe-cache bounds so they can't fill the disk.
 func headCount() int {
 	heads, _ := os.ReadDir(filepath.Join(cacheDir, "heads"))
 	return len(heads)
 }
 
-// saveHead saves an MP4's start, through its index (the moov box) plus headSlack, to headFile(id), so
-// Jellyfin's probe of a new title is served from disk without a stream link (stream.Read). Files with
-// the index at the end get none.
+// saveHead saves an MP4's head, its start through the index plus headSlack, so Jellyfin's probe of a new
+// title is served from disk.
 func saveHead(id int, r io.Reader) error {
 	f, err := os.CreateTemp(filepath.Join(cacheDir, "heads"), "tmp-")
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name()) // after a successful rename there's nothing left to remove
+	defer os.Remove(f.Name()) // a no-op after the rename
 	defer f.Close()
 	if err := mp4.CopyHead(f, r, headMax); err != nil {
 		return err
