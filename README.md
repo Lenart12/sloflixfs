@@ -59,69 +59,16 @@ Then [set up Jellyfin](#setting-up-jellyfin).
 
 ### Docker Compose
 
-Create a directory with this `compose.yml`, and fill in your sloflix credentials:
-
-```yaml
-services:
-  sloflix:
-    image: lenart12/sloflixfs:latest
-    restart: unless-stopped
-    environment:
-      SLOFLIX_USER: your-username
-      SLOFLIX_PASS: your-password
-      # Optional settings, see Configuration:
-      # SLOFLIX_JELLYFIN_URL: http://jellyfin:8096
-      # SLOFLIX_JELLYFIN_KEY: your-api-key
-      # SLOFLIX_LIMIT_MOVIES: 20
-      # SLOFLIX_LIMIT_SHOWS: 2
-    devices:
-      - /dev/fuse
-    cap_add:
-      - SYS_ADMIN
-    security_opt:
-      - apparmor:unconfined
-    volumes:
-      - cache:/cache
-      - type: bind
-        source: /mnt/sloflix
-        target: /mnt/sloflix
-        bind:
-          propagation: rshared
-          create_host_path: true
-    healthcheck:
-      test: ["CMD", "test", "-d", "/mnt/sloflix/library/Movies"]
-      interval: 30s
-      start_period: 10s
-
-  jellyfin:
-    image: jellyfin/jellyfin
-    restart: unless-stopped
-    depends_on:
-      sloflix:
-        condition: service_healthy
-    ports:
-      - 8096:8096
-    volumes:
-      - jellyfin-config:/config
-      - jellyfin-cache:/cache
-      - type: bind
-        source: /mnt/sloflix
-        target: /media/sloflix
-        read_only: true
-        bind:
-          propagation: rslave
-
-volumes:
-  cache:
-  jellyfin-config:
-  jellyfin-cache:
-```
-
-Start it, then open Jellyfin at http://localhost:8096:
+Download [`compose.yml`](compose.yml) into a new directory, set your sloflix credentials in it, and start the stack:
 
 ```sh
+mkdir sloflixfs && cd sloflixfs
+curl -fsSLO https://raw.githubusercontent.com/Lenart12/sloflixfs/main/compose.yml
+nano compose.yml        # set SLOFLIX_USER and SLOFLIX_PASS
 docker compose up -d
 ```
+
+Jellyfin is then available at http://localhost:8096. Optional settings are listed, commented out, in the file's `environment` section.
 
 The file holds your password, so keep it private (`chmod 600 compose.yml`). To update, run `docker compose pull && docker compose up -d`.
 
@@ -145,7 +92,7 @@ docker run -d --name sloflix --restart unless-stopped \
   lenart12/sloflixfs:latest
 ```
 
-The library appears on the host at `/mnt/sloflix/library`. If Jellyfin runs in a container, bind `/mnt/sloflix` into it with `rslave` propagation, as in the [Compose file](#docker-compose).
+The library appears on the host at `/mnt/sloflix/library`. If Jellyfin runs in a container, bind `/mnt/sloflix` into it with `rslave` propagation, as [`compose.yml`](compose.yml) does.
 
 ### Go
 
@@ -183,10 +130,9 @@ cd sloflixfs
 go build -o sloflixfs .
 ```
 
-The repository's `compose.yml` builds the image from source and reads its settings from `.env`:
+To build the image from source instead of pulling it, set your credentials in [`compose.yml`](compose.yml) and run:
 
 ```sh
-cp .env.example .env    # set SLOFLIX_USER and SLOFLIX_PASS
 docker compose up -d --build
 ```
 

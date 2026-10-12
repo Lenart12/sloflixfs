@@ -1,3 +1,6 @@
+# sloflixfs and Jellyfin. Set your sloflix credentials below, then run `docker compose up -d`.
+# Options are described in the README's Configuration section.
+
 x-logging: &logging
   driver: json-file
   options:
@@ -7,12 +10,16 @@ x-logging: &logging
 services:
   sloflix:
     image: lenart12/sloflixfs:latest
-    build: .  # `docker compose up --build` builds from source instead
+    build: .  # used only by `docker compose up --build` in a clone of the repository
     restart: unless-stopped
-    env_file: .env  # every SLOFLIX_* setting set there is passed through
     environment:
-      SLOFLIX_USER: ${SLOFLIX_USER:?set SLOFLIX_USER in .env}
-      SLOFLIX_PASS: ${SLOFLIX_PASS:?set SLOFLIX_PASS in .env}
+      SLOFLIX_USER: your-username
+      SLOFLIX_PASS: your-password
+      # SLOFLIX_PROBE_CACHE: 500
+      # SLOFLIX_JELLYFIN_URL: http://jellyfin:8096
+      # SLOFLIX_JELLYFIN_KEY: your-api-key
+      # SLOFLIX_LIMIT_MOVIES: 20
+      # SLOFLIX_LIMIT_SHOWS: 2
     devices:
       - /dev/fuse
     cap_add:
@@ -21,10 +28,10 @@ services:
       - apparmor:unconfined
     volumes:
       - cache:/cache
-      # The mount appears at $SLOFLIX_DIR/library. Binding the parent keeps a mount left dead by a crash
-      # from blocking startup; sloflix clears it when it starts.
+      # The mount appears on the host at /mnt/sloflix/library. Binding the parent keeps a mount left dead
+      # by a crash from blocking startup; sloflix clears it when it starts.
       - type: bind
-        source: ${SLOFLIX_DIR:-/mnt/sloflix}
+        source: /mnt/sloflix
         target: /mnt/sloflix
         bind:
           propagation: rshared
@@ -48,7 +55,7 @@ services:
       - jellyfin-cache:/cache
       # Libraries: /media/sloflix/library/Movies and /media/sloflix/library/Shows
       - type: bind
-        source: ${SLOFLIX_DIR:-/mnt/sloflix}
+        source: /mnt/sloflix
         target: /media/sloflix
         read_only: true
         bind:
