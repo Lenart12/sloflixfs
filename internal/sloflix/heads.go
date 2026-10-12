@@ -2,7 +2,6 @@ package sloflix
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Lenart12/sloflixfs/internal/cdn"
+	"github.com/Lenart12/sloflixfs/internal/mp4"
 )
 
 // minVideoSize is the smallest file treated as a video. Smaller ones are broken uploads (seen: 32 KB and
@@ -120,29 +120,8 @@ func saveHead(id int, r io.Reader) error {
 	}
 	defer os.Remove(f.Name()) // after a successful rename there's nothing left to remove
 	defer f.Close()
-	for off := int64(0); ; {
-		var hdr [16]byte
-		if _, err := io.ReadFull(r, hdr[:8]); err != nil {
-			return err
-		}
-		size, n := int64(binary.BigEndian.Uint32(hdr[:4])), int64(8)
-		if size == 1 { // 64-bit size
-			if _, err := io.ReadFull(r, hdr[8:]); err != nil {
-				return err
-			}
-			size, n = int64(binary.BigEndian.Uint64(hdr[8:])), 16
-		}
-		typ := string(hdr[4:8])
-		if typ == "mdat" || size < n || size > headMax-off { // not off+size: a huge 64-bit size would overflow
-			return fmt.Errorf("not an MP4 with its index (moov) at the start: %q box of %d bytes at %d", typ, size, off)
-		}
-		f.Write(hdr[:n])
-		if _, err := io.CopyN(f, r, size-n); err != nil {
-			return err
-		}
-		if off += size; typ == "moov" {
-			break
-		}
+	if err := mp4.CopyHead(f, r, headMax); err != nil {
+		return err
 	}
 	if _, err := io.CopyN(f, r, headSlack); err != nil && err != io.EOF {
 		return err
