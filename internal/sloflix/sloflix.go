@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Lenart12/sloflixfs/internal/jellyfin"
 )
 
 // Config sets up the upstream side (see Start).
@@ -29,7 +31,7 @@ func Start(cfg Config) error {
 	cacheDir, refreshTTL, metaTTL, probeCache = cfg.CacheDir, cfg.Refresh, cfg.Revalidate, cfg.ProbeCache
 	username, password = cfg.Username, cfg.Password
 	limitMovies, limitShows = cfg.LimitMovies, cfg.LimitShows
-	jfURL, jfKey, jfPath = cfg.JellyfinURL, cfg.JellyfinKey, cfg.JellyfinPath
+	jf = jellyfin.New(cfg.JellyfinURL, cfg.JellyfinKey, cfg.JellyfinPath)
 	slots = make(chan struct{}, cfg.Concurrency)
 	go throttleLoop(time.Duration(float64(time.Second)/cfg.Rate), hiQ, loQ)
 	os.RemoveAll(filepath.Join(cacheDir, "subs")) // before v0.4.5, named by upstream's file name

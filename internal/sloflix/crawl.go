@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Lenart12/sloflixfs/internal/dood"
+	"github.com/Lenart12/sloflixfs/internal/jellyfin"
 )
 
 type crawlFail struct {
@@ -74,8 +75,8 @@ func Crawl() {
 	for {
 		go saveHeads()
 		queue := crawlQueue()
-		saveFailed()      // the previous round's failures
-		go jellyfinScan() // at most hourly, and only after titles were newly listed
+		saveFailed() // the previous round's failures
+		go jf.Scan() // at most hourly, and only after titles were newly listed
 		// Rebuild at most every 10 minutes, so newly listed titles don't wait behind a long recheck queue.
 		next := time.Now().Add(10 * time.Minute)
 		ids := make(chan int)
@@ -173,6 +174,21 @@ func crawlQueue() []int {
 	return ids
 }
 
+// jf scans Jellyfin's libraries once the crawler lists new titles; nil if off.
+var jf *jellyfin.Scanner
+
+// newlyListed counts a title for Jellyfin's next scan, and scans now if the probe cache is half full, so new
+// titles keep getting heads.
+func newlyListed() {
+	if jf == nil {
+		return
+	}
+	jf.Add()
+	if probeCache > 0 && headCount()*2 >= probeCache {
+		go jf.Scan()
+	}
+}
+
 // crawl checks one title, unless playback did meanwhile, and revalidates its cached subtitle.
 func crawl(id int) {
 	defer func() {
@@ -192,7 +208,7 @@ func crawl(id int) {
 	_, wasListed := Info(id)
 	_, m, err := resolve(id, false)
 	if err == nil && !wasListed { // resolve succeeds only for a playable title: it's newly listed
-		jfVerified()
+		newlyListed()
 	}
 	lookupMu.Lock()
 	if err != nil {

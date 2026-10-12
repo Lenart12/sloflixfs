@@ -1,4 +1,4 @@
-package sloflix
+package jellyfin
 
 import (
 	"fmt"
@@ -33,23 +33,22 @@ func TestJellyfinScan(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	defer func(c time.Duration) { jfURL, jfCooldown = "", c }(jfCooldown)
-	jfURL, jfKey, jfPath = srv.URL, "key", "/media/sloflix/library"
+	s := New(srv.URL, "key", "/media/sloflix/library")
 	scan := func(last time.Time) []string {
-		jfMu.Lock()
-		jfNew, jfLast = 1, last
-		jfMu.Unlock()
+		s.mu.Lock()
+		s.pending, s.last = 1, last
+		s.mu.Unlock()
 		mu.Lock()
 		posted = nil
 		mu.Unlock()
-		jellyfinScan()
+		s.Scan()
 		mu.Lock()
 		defer mu.Unlock()
 		return posted
 	}
 
-	if got := scan(time.Time{}); !slices.Equal(got, []string{"POST /Items/m/Refresh", "POST /Items/s/Refresh"}) || jfNew != 0 {
-		t.Fatalf("scan posted %v, jfNew %d", got, jfNew)
+	if got := scan(time.Time{}); !slices.Equal(got, []string{"POST /Items/m/Refresh", "POST /Items/s/Refresh"}) || s.pending != 0 {
+		t.Fatalf("scan posted %v, pending %d", got, s.pending)
 	}
 	if got := scan(time.Now()); got != nil {
 		t.Fatalf("scan within the cooldown posted %v", got)
