@@ -1,20 +1,18 @@
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "3"
+
 services:
   sloflix:
     image: lenart12/sloflixfs:latest
-    build: .  # used by `docker compose up --build` to build from source instead
+    build: .  # `docker compose up --build` builds from source instead
     restart: unless-stopped
+    env_file: .env  # every SLOFLIX_* setting set there is passed through
     environment:
-      SLOFLIX_USER: ${SLOFLIX_USER}
-      SLOFLIX_PASS: ${SLOFLIX_PASS}
-      # SLOFLIX_REFRESH: ${SLOFLIX_REFRESH}
-      # SLOFLIX_REVALIDATE: ${SLOFLIX_REVALIDATE}
-      # SLOFLIX_PROBE_CACHE: ${SLOFLIX_PROBE_CACHE}
-      # SLOFLIX_RATE: ${SLOFLIX_RATE}
-      # SLOFLIX_CONCURRENCY: ${SLOFLIX_CONCURRENCY}
-      # SLOFLIX_JELLYFIN_URL: ${SLOFLIX_JELLYFIN_URL}
-      # SLOFLIX_JELLYFIN_KEY: ${SLOFLIX_JELLYFIN_KEY}
-      # SLOFLIX_LIMIT_MOVIES: ${SLOFLIX_LIMIT_MOVIES}
-      # SLOFLIX_LIMIT_SHOWS: ${SLOFLIX_LIMIT_SHOWS}
+      SLOFLIX_USER: ${SLOFLIX_USER:?set SLOFLIX_USER in .env}
+      SLOFLIX_PASS: ${SLOFLIX_PASS:?set SLOFLIX_PASS in .env}
     devices:
       - /dev/fuse
     cap_add:
@@ -23,8 +21,8 @@ services:
       - apparmor:unconfined
     volumes:
       - cache:/cache
-      # The FUSE mount lives at $SLOFLIX_DIR/library. The parent dir is what gets bind-mounted, so a mount left
-      # dead by a crash can't stop the containers from starting, and sloflix clears it on startup.
+      # The mount appears at $SLOFLIX_DIR/library. Binding the parent keeps a mount left dead by a crash
+      # from blocking startup; sloflix clears it when it starts.
       - type: bind
         source: ${SLOFLIX_DIR:-/mnt/sloflix}
         target: /mnt/sloflix
@@ -35,6 +33,7 @@ services:
       test: ["CMD", "test", "-d", "/mnt/sloflix/library/Movies"]
       interval: 30s
       start_period: 10s
+    logging: *logging
 
   jellyfin:
     image: jellyfin/jellyfin
@@ -54,6 +53,7 @@ services:
         read_only: true
         bind:
           propagation: rslave
+    logging: *logging
 
 volumes:
   cache:
