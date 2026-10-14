@@ -1,6 +1,7 @@
 package sloflix
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -25,6 +26,10 @@ func TestResolveDoodSpelling(t *testing.T) {
 		switch {
 		case r.URL.Path == "/e/abc":
 			w.Write([]byte(`<script>$.get('/pass_md5/1-2/tok', function(d){})</script>`))
+		case r.URL.Path == "/e/enc":
+			w.Write([]byte(`<script>$.get('/dood?op=enc_status&id=1');</script>`))
+		case r.URL.Path == "/media/single/12":
+			fmt.Fprintf(w, `{"status":"success","data":{"media_sources":[{"media_source":"https://do7go.com/e/enc","media_source_name":"SLOSubs (DoodStream)"}]}}`)
 		case strings.HasPrefix(r.URL.Path, "/pass_md5/"):
 			w.Write([]byte(srv.URL + "/file~"))
 		case strings.HasPrefix(r.URL.Path, "/file~"):
@@ -74,6 +79,10 @@ func TestResolveDoodSpelling(t *testing.T) {
 	}
 	if _, ok := Info(11); ok {
 		t.Fatal("broken file is listed")
+	}
+	// A video DoodStream couldn't encode fails on its own, so its retries back off.
+	if _, _, err := resolve(12, background); !errors.Is(err, dood.ErrEncoding) || errors.As(err, new(sharedErr)) {
+		t.Fatalf("encoding: %v", err)
 	}
 	writeMeta(9, Meta{Size: 65536}) // recorded as playable before minVideoSize existed
 	if _, ok := Info(9); ok {

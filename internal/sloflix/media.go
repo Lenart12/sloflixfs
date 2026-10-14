@@ -127,6 +127,9 @@ func resolve(id int, p priority) (string, Meta, error) {
 			defer func() { release = acquire(p) }()
 			return takeDood(p)
 		})
+		if errors.Is(err, dood.ErrEncoding) { // this video's own problem, so it backs off
+			return "", Meta{}, err
+		}
 		if err != nil {
 			return "", Meta{}, sharedErr{err}
 		}

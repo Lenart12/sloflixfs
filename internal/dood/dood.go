@@ -29,6 +29,10 @@ var Mirror = "https://doodstream.com/e/"
 // ErrGone means DoodStream reports the video deleted.
 var ErrGone = errors.New("video not found on DoodStream")
 
+// ErrEncoding means DoodStream shows its encoding placeholder instead of the player: the video is still
+// being encoded, or its encoding failed ("Video encoding error.").
+var ErrEncoding = errors.New("video not encoded on DoodStream")
+
 var (
 	passMD5   = regexp.MustCompile(`/pass_md5/[^'"]+`)
 	htmlTitle = regexp.MustCompile(`<title>([^<]*)`)
@@ -79,6 +83,9 @@ func player(code string) ([]byte, *url.URL, error) {
 	}
 	if strings.Contains(strings.ToLower(title), "video not found") {
 		return nil, nil, ErrGone
+	}
+	if bytes.Contains(page, []byte("op=enc_status")) {
+		return nil, nil, fmt.Errorf("doodstream %s: %w", code, ErrEncoding)
 	}
 	if bytes.Contains(page, []byte("turnstile")) {
 		return nil, nil, fmt.Errorf("doodstream %s: asks for a captcha (Turnstile)", code)
