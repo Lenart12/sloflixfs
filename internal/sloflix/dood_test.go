@@ -18,6 +18,8 @@ import (
 func TestResolveDoodSpelling(t *testing.T) {
 	var size atomic.Int64
 	size.Store(777777777)
+	var head atomic.Value
+	head.Store("x")
 	var srv *httptest.Server
 	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -28,7 +30,7 @@ func TestResolveDoodSpelling(t *testing.T) {
 		case strings.HasPrefix(r.URL.Path, "/file~"):
 			w.Header().Set("Content-Range", fmt.Sprintf("bytes 0-0/%d", size.Load()))
 			w.WriteHeader(http.StatusPartialContent)
-			w.Write([]byte("x"))
+			w.Write([]byte(head.Load().(string)))
 		case r.URL.Path == "/media/single/10": // a source URL that doesn't parse (title 9695 crashed resolve)
 			fmt.Fprintf(w, `{"status":"success","data":{"media_sources":[{"media_source":"https://x/%%zz","media_source_name":"X"}]}}`)
 		default: // the sloflix API
@@ -63,6 +65,15 @@ func TestResolveDoodSpelling(t *testing.T) {
 	}
 	if _, ok := Info(8); ok {
 		t.Fatal("tiny file is listed")
+	}
+	// So is a file that isn't a video container.
+	size.Store(777777777)
+	head.Store("\x14\xd3J(\x88\xabC\xe0DM\"\x05")
+	if _, _, err := resolve(11, background); err == nil || !strings.Contains(err.Error(), "not a readable video") {
+		t.Fatalf("broken file: %v", err)
+	}
+	if _, ok := Info(11); ok {
+		t.Fatal("broken file is listed")
 	}
 	writeMeta(9, Meta{Size: 65536}) // recorded as playable before minVideoSize existed
 	if _, ok := Info(9); ok {

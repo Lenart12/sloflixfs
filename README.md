@@ -232,7 +232,7 @@ FUSE has no change notifications, so Jellyfin can't see new titles until its nex
 - **Removed titles:** a title that used to play stays listed for 24 hours after upstream first reports it gone, so a single bad response can't make Jellyfin drop it and its watch history.
 - **Failing titles:** a title that has never played and fails on its own, such as on an unreachable video server, is retried after an hour, then twice as long after each failure, up to about 5 days. A failure that affects every title, such as the sloflix API or DoodStream being down, is retried after an hour.
 - **Titles without a source** are rechecked every `-refresh`, backing off the same way.
-- **Broken uploads:** files under 5 MB are hidden like titles without a source.
+- **Broken uploads:** files under 5 MB, and files whose first bytes aren't a readable video container, are hidden like titles without a source.
 
 ## Limitations
 
@@ -278,7 +278,7 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 | `internal/cdn` | Video server requests, size probes, certificate checks, host health |
 | `internal/dood` | DoodStream link extraction and its rate limit |
 | `internal/jellyfin` | Library scan triggers |
-| `internal/mp4` | Reading the MP4 index for probe headers |
+| `internal/mp4` | Reading the MP4 index for probe headers, spotting broken files |
 | `internal/web` | Shared HTTP request helpers |
 
 ## License

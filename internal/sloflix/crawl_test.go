@@ -145,6 +145,7 @@ func TestCrawlBackoff(t *testing.T) {
 // instead of counting as checked.
 func TestCrawlMetaWriteFails(t *testing.T) {
 	video := make([]byte, minVideoSize+1)
+	copy(video[4:], "ftyp")
 	cdn := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.ServeContent(w, r, "f.mp4", time.Time{}, bytes.NewReader(video))
 	}))

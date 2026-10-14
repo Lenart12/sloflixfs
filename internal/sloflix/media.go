@@ -15,6 +15,7 @@ import (
 
 	"github.com/Lenart12/sloflixfs/internal/cdn"
 	"github.com/Lenart12/sloflixfs/internal/dood"
+	"github.com/Lenart12/sloflixfs/internal/mp4"
 )
 
 const (
@@ -199,10 +200,10 @@ func takeDood(p priority) error {
 	return dood.TakeBackground()
 }
 
-// measure probes a stream's size. missing is set if the file is gone or too small to be a video.
+// measure probes a stream's size. missing is set if the file is gone or isn't a readable video.
 func measure(id int, stream string) (size int64, missing, err error) {
 	start := time.Now()
-	size, err = cdn.ProbeSize(stream)
+	size, head, err := cdn.Probe(stream)
 	if errors.Is(err, cdn.ErrFileGone) {
 		return 0, err, nil
 	}
@@ -214,6 +215,10 @@ func measure(id int, stream string) (size int64, missing, err error) {
 	if size < minVideoSize {
 		os.Remove(headFile(id))
 		return 0, fmt.Errorf("file is only %d bytes, likely a broken upload", size), nil
+	}
+	if err := mp4.Check(head); err != nil {
+		os.Remove(headFile(id))
+		return 0, fmt.Errorf("not a readable video, likely a broken upload: %v", err), nil
 	}
 	return size, nil, nil
 }
