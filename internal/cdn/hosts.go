@@ -69,8 +69,9 @@ func Reachable(uri string) bool {
 	if err == nil {
 		conn.Close()
 	}
-	if fails := hostResult(addr, err); err != nil {
-		log.Printf("cdn: artwork host %s unreachable (%d in a row), left out of NFOs: %v", addr, fails, err)
+	// Logged once, when the second failure in a row marks the host down. Later hourly rechecks stay quiet.
+	if fails := hostResult(addr, err); fails == 2 {
+		log.Printf("cdn: artwork host %s unreachable, left out of NFOs: %v", addr, err)
 	}
 	return err == nil
 }
