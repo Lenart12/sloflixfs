@@ -174,15 +174,19 @@ func order(tasks []crawlTask) []int {
 		}
 		return a.at.Compare(b.at)
 	})
-	ids, fresh := make([]int, len(tasks)), 0
+	ids, fresh, retry := make([]int, len(tasks)), 0, 0
+	lookupMu.Lock()
 	for i, t := range tasks {
 		ids[i] = t.id
-		if t.bucket == 0 {
+		if _, failed := crawlFailed[t.id]; t.bucket == 0 && failed {
+			retry++ // never verified, such as a title on a dead video server
+		} else if t.bucket == 0 {
 			fresh++
 		}
 	}
+	lookupMu.Unlock()
 	if len(ids) > 0 {
-		log.Printf("crawl: %d new, %d to recheck; %d of %d probe cache slots used", fresh, len(ids)-fresh, headCount(), probeCache)
+		log.Printf("crawl: %d new, %d retrying, %d to recheck; %d of %d probe cache slots used", fresh, retry, len(ids)-fresh-retry, headCount(), probeCache)
 	}
 	return ids
 }
