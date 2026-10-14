@@ -2,13 +2,13 @@ package fusefs
 
 import (
 	"context"
-	"log"
 	"syscall"
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 
+	"github.com/Lenart12/sloflixfs/internal/logx"
 	"github.com/Lenart12/sloflixfs/internal/sloflix"
 )
 
@@ -31,7 +31,7 @@ func (v *video) Getattr(ctx context.Context, f fs.FileHandle, out *fuse.AttrOut)
 }
 
 func (v *video) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
-	log.Printf("open %d: %s", v.id, v.Path(nil))
+	logx.Infof("open %d: %s", v.id, v.Path(nil))
 	s := &stream{
 		id:     v.id,
 		opened: time.Now(),
@@ -56,7 +56,7 @@ func (v *video) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, 
 	_, size, err := sloflix.StreamURL(v.id, false)
 	if err != nil {
 		if !sloflix.Quiet(err) {
-			log.Printf("open %d: %v", v.id, err)
+			logx.Warnf("open %d: %v", v.id, err)
 		}
 		return nil, 0, syscall.EIO
 	}

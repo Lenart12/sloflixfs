@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Lenart12/sloflixfs/internal/logx"
 	"github.com/Lenart12/sloflixfs/internal/web"
 )
 
@@ -85,7 +85,7 @@ func login(p priority) (_ string, err error) {
 	}
 	defer func() { loginErr, loginAt = err, time.Now() }()
 	wait(p)
-	log.Printf("api: login")
+	logx.Infof("api: login")
 	body, _ := json.Marshal(map[string]string{"username": username, "password": password})
 	req, err := web.NewRequest(context.Background(), "POST", apiBase+"/user/login", bytes.NewReader(body))
 	if err != nil {
@@ -106,7 +106,7 @@ func login(p priority) (_ string, err error) {
 	}
 	token = r.Metadata.AccessToken
 	if err := writeFile(filepath.Join(cacheDir, "token"), []byte(token)); err != nil {
-		log.Printf("api: saving token: %v", err) // the token still works; it's just not kept across restarts
+		logx.Warnf("api: saving token: %v", err) // the token still works; it's just not kept across restarts
 	}
 	return token, nil
 }
@@ -133,7 +133,7 @@ func api(path string, out any, p priority) error {
 			return err
 		}
 		wait(p)
-		log.Printf("api: GET %s", path)
+		logx.Debugf("api: GET %s", path)
 		req, err := web.NewRequest(context.Background(), "GET", apiBase+path, nil)
 		if err != nil {
 			return err

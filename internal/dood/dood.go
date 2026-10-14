@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"math/rand/v2"
 	"net/http"
 	"net/url"
@@ -16,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Lenart12/sloflixfs/internal/cdn"
+	"github.com/Lenart12/sloflixfs/internal/logx"
 	"github.com/Lenart12/sloflixfs/internal/web"
 )
 
@@ -68,7 +68,7 @@ func URL(code string, take func() error) (string, error) {
 
 // player opens the player page and returns its pass_md5 path and its URL after redirects.
 func player(code string) ([]byte, *url.URL, error) {
-	log.Printf("dood: GET %s", code)
+	logx.Debugf("dood: GET %s", code)
 	page, resp, err := get(Mirror+code, "https://www.sloflix.com/")
 	if err != nil {
 		return nil, nil, err

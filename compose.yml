@@ -20,6 +20,7 @@ services:
       # SLOFLIX_JELLYFIN_KEY: your-api-key
       # SLOFLIX_LIMIT_MOVIES: 20
       # SLOFLIX_LIMIT_SHOWS: 2
+      # SLOFLIX_LOG_LEVEL: debug
     devices:
       - /dev/fuse
     cap_add:

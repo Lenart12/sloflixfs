@@ -3,7 +3,6 @@ package sloflix
 import (
 	"encoding/json"
 	"errors"
-	"log"
 	"maps"
 	"os"
 	"path/filepath"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/Lenart12/sloflixfs/internal/dood"
 	"github.com/Lenart12/sloflixfs/internal/jellyfin"
+	"github.com/Lenart12/sloflixfs/internal/logx"
 )
 
 // crawlMaxWait caps the backoff of a title the crawler keeps failing on: failTTL doubled 7 times.
@@ -44,7 +44,7 @@ func saveFailed() {
 	b, _ := json.Marshal(crawlFailed)
 	lookupMu.Unlock()
 	if err := writeFile(failedFile(), b); err != nil {
-		log.Printf("crawl: saving backoff state: %v", err)
+		logx.Warnf("crawl: saving backoff state: %v", err)
 	}
 }
 
@@ -114,14 +114,14 @@ func crawlQueue() []int {
 	}
 	movies, err := catalog(Movies)
 	if err != nil {
-		log.Printf("crawl: %v", err)
+		logx.Warnf("crawl: %v", err)
 	}
 	for _, it := range limit(Movies, movies) {
 		add(it.ID, it.CreatedAt())
 	}
 	shows, err := catalog(Shows)
 	if err != nil {
-		log.Printf("crawl: %v", err)
+		logx.Warnf("crawl: %v", err)
 	}
 	// Refreshing all ~1300 show and season listings takes over 20 minutes at 1 request/s, so titles are
 	// checked between batches.
@@ -140,14 +140,14 @@ func episodeList(shows []Item, deadline time.Time) []Item {
 			si, err = showMeta(show.ID)
 		}
 		if err != nil {
-			log.Printf("crawl: show %d: %v", show.ID, err)
+			logx.Warnf("crawl: show %d: %v", show.ID, err)
 			continue
 		}
 		for _, s := range si.Seasons {
 			eps := CachedEpisodes(show.ID, s)
 			if time.Now().Before(deadline) {
 				if eps, err = episodes(show.ID, s); err != nil {
-					log.Printf("crawl: show %d season %d: %v", show.ID, s, err)
+					logx.Warnf("crawl: show %d season %d: %v", show.ID, s, err)
 				}
 			}
 			out = append(out, eps...)
@@ -186,7 +186,7 @@ func order(tasks []crawlTask) []int {
 	}
 	lookupMu.Unlock()
 	if len(ids) > 0 {
-		log.Printf("crawl: %d new, %d retrying, %d to recheck; %d of %d probe cache slots used", fresh, retry, len(ids)-fresh-retry, headCount(), probeCache)
+		logx.Infof("crawl: %d new, %d retrying, %d to recheck; %d of %d probe cache slots used", fresh, retry, len(ids)-fresh-retry, headCount(), probeCache)
 	}
 	return ids
 }
@@ -211,7 +211,7 @@ func crawl(id int) {
 	defer func() {
 		if r := recover(); r != nil {
 			// A bug: skip the title for crawlMaxWait, even across restarts, rather than crash and unmount.
-			log.Printf("crawl %d: panic: %v\n%s", id, r, debug.Stack())
+			logx.Errorf("crawl %d: panic: %v\n%s", id, r, debug.Stack())
 			lookupMu.Lock()
 			crawlFailed[id] = crawlFail{Next: time.Now().Add(crawlMaxWait), Wait: crawlMaxWait}
 			lookupMu.Unlock()
@@ -224,11 +224,16 @@ func crawl(id int) {
 	_, wasListed := Info(id)
 	_, m, err := resolve(id, background)
 	if err == nil && !wasListed {
+		logx.Infof("media %d added", id)
 		newlyListed()
 	}
 	backoff(id, err)
 	if err != nil {
-		log.Printf("crawl %d: %v", id, err)
+		if _, listed := Info(id); wasListed && !listed {
+			logx.Infof("media %d removed: %v", id, err)
+		} else {
+			logx.Debugf("crawl %d: %v", id, err)
+		}
 		return
 	}
 	revalidateSub(id, m)
@@ -258,12 +263,12 @@ func revalidateSub(id int, m Meta) {
 		return
 	}
 	if changed, err := fetchSubtitle(m.Sub); err != nil {
-		log.Printf("crawl %d: %v", id, err)
+		logx.Debugf("crawl %d: %v", id, err)
 	} else if changed {
-		log.Printf("media %d changed: subtitle %q", id, m.Sub)
+		logx.Infof("media %d changed: subtitle %q", id, m.Sub)
 		m.Changed = time.Now()
 		if err := writeMeta(id, m); err != nil {
-			log.Printf("media %d: saving meta: %v", id, err)
+			logx.Warnf("media %d: saving meta: %v", id, err)
 		}
 	}
 }

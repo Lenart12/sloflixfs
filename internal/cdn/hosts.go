@@ -1,11 +1,12 @@
 package cdn
 
 import (
-	"log"
 	"net"
 	"net/url"
 	"sync"
 	"time"
+
+	"github.com/Lenart12/sloflixfs/internal/logx"
 )
 
 // hostTTL is how long a host's outcome is remembered.
@@ -71,7 +72,7 @@ func Reachable(uri string) bool {
 	}
 	// Logged once, when the second failure in a row marks the host down. Later hourly rechecks stay quiet.
 	if fails := hostResult(addr, err); fails == 2 {
-		log.Printf("cdn: artwork host %s unreachable, left out of NFOs: %v", addr, err)
+		logx.Warnf("cdn: artwork host %s unreachable, left out of NFOs: %v", addr, err)
 	}
 	return err == nil
 }

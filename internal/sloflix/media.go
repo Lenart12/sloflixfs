@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"path"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/Lenart12/sloflixfs/internal/cdn"
 	"github.com/Lenart12/sloflixfs/internal/dood"
+	"github.com/Lenart12/sloflixfs/internal/logx"
 	"github.com/Lenart12/sloflixfs/internal/mp4"
 )
 
@@ -214,7 +214,7 @@ func measure(id int, stream string) (size int64, missing, err error) {
 		return 0, nil, err
 	}
 	u, _ := url.Parse(stream)
-	log.Printf("cdn: probe %d %s %v", id, u.Host, time.Since(start).Round(time.Millisecond))
+	logx.Debugf("cdn: probe %d %s %v", id, u.Host, time.Since(start).Round(time.Millisecond))
 	if size < minVideoSize {
 		os.Remove(headFile(id))
 		return 0, fmt.Errorf("file is only %d bytes, likely a broken upload", size), nil
@@ -252,7 +252,7 @@ func noteChange(id int, prev Meta, m *Meta) {
 	if prev.Size == m.Size && prev.Sub == m.Sub {
 		return
 	}
-	log.Printf("media %d changed: size %d -> %d, sub %q -> %q", id, prev.Size, m.Size, prev.Sub, m.Sub)
+	logx.Infof("media %d changed: size %d -> %d, sub %q -> %q", id, prev.Size, m.Size, prev.Sub, m.Sub)
 	m.Changed = time.Now()
 	if prev.Size > 0 && prev.Size != m.Size {
 		os.Remove(headFile(id))
@@ -265,7 +265,7 @@ func recordPlayable(id int, p priority, isNew bool, m Meta) error {
 		if p == background { // not listed: the crawler retries it
 			return sharedErr{err}
 		}
-		log.Printf("media %d: saving meta: %v", id, err) // the link still plays
+		logx.Warnf("media %d: saving meta: %v", id, err) // the link still plays
 	}
 	if p == background && isNew && probeCache > 0 {
 		writeFile(wantFile(id), nil)
@@ -302,10 +302,10 @@ func readMeta(id int) (Meta, time.Time, bool) {
 // SetSize records a new size a stream saw: the upstream file was replaced.
 func SetSize(id int, size int64) {
 	m, _, _ := readMeta(id)
-	log.Printf("media %d changed: size %d -> %d", id, m.Size, size)
+	logx.Infof("media %d changed: size %d -> %d", id, m.Size, size)
 	m.Size, m.Changed = size, time.Now()
 	if err := writeMeta(id, m); err != nil {
-		log.Printf("media %d: saving meta: %v", id, err)
+		logx.Warnf("media %d: saving meta: %v", id, err)
 	}
 	os.Remove(headFile(id))
 }

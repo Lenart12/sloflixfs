@@ -3,11 +3,12 @@ package sloflix
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/Lenart12/sloflixfs/internal/logx"
 )
 
 const (
@@ -63,14 +64,14 @@ func cached[T any](key string, fetch func() (T, error)) (T, error) {
 		if !ok {
 			return v, err
 		}
-		log.Printf("listing %s: refresh failed, serving the cached copy: %v", key, err)
+		logx.Warnf("listing %s: refresh failed, serving the cached copy: %v", key, err)
 		// Keep serving the stale copy for failTTL instead of retrying on every listing.
 		memPut(key, memEntry{e.v, time.Now().Add(failTTL - refreshTTL)})
 		return e.v.(T), nil
 	}
 	b, _ := json.Marshal(v)
 	if err := writeFile(cacheFile(key), b); err != nil {
-		log.Printf("listing %s: saving: %v", key, err) // still served from memory
+		logx.Warnf("listing %s: saving: %v", key, err) // still served from memory
 	}
 	memPut(key, memEntry{v, time.Now()})
 	return v, nil
@@ -124,7 +125,7 @@ func checkShrink(key string, old, n int) error {
 	if time.Since(first) < shrinkAccept {
 		return fmt.Errorf("%d entries, down from %d since %s", n, old, first.Format(time.DateTime))
 	}
-	log.Printf("listing %s: accepting shrink to %d entries after %v", key, n, shrinkAccept)
+	logx.Infof("listing %s: accepting shrink to %d entries after %v", key, n, shrinkAccept)
 	delete(shrunk, key)
 	return nil
 }

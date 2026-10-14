@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Lenart12/sloflixfs/internal/cdn"
+	"github.com/Lenart12/sloflixfs/internal/logx"
 	"github.com/Lenart12/sloflixfs/internal/mp4"
 )
 
@@ -91,7 +91,7 @@ func saveHeads() {
 		}
 		if m.URL != "" && age < urlTTL && headCount() < probeCache {
 			if err := fetchHead(id, m.URL, m.Size); err != nil {
-				log.Printf("media %d: no probe cache: %v", id, err)
+				logx.Warnf("media %d: no probe cache: %v", id, err)
 			}
 		}
 		os.Remove(wantFile(id))

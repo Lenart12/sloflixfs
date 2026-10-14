@@ -5,12 +5,13 @@ package jellyfin
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Lenart12/sloflixfs/internal/logx"
 )
 
 var (
@@ -62,7 +63,7 @@ func (s *Scanner) Scan() {
 	}
 	ids, names, err := s.idleLibraries()
 	if err != nil {
-		log.Printf("jellyfin: %v", err)
+		logx.Warnf("jellyfin: %v", err)
 		return
 	}
 	if ids == nil {
@@ -71,7 +72,7 @@ func (s *Scanner) Scan() {
 	for _, id := range ids {
 		err := s.do("POST", "/Items/"+id+"/Refresh?Recursive=true&MetadataRefreshMode=Default&ImageRefreshMode=Default&ReplaceAllMetadata=false&ReplaceAllImages=false", nil)
 		if err != nil {
-			log.Printf("jellyfin: %v", err)
+			logx.Warnf("jellyfin: %v", err)
 			return
 		}
 	}
@@ -79,7 +80,7 @@ func (s *Scanner) Scan() {
 	s.pending -= n // titles added meanwhile wait for the next scan
 	s.last = time.Now()
 	s.mu.Unlock()
-	log.Printf("jellyfin: scanning %s (%d new titles)", strings.Join(names, ", "), n)
+	logx.Infof("jellyfin: scanning %s (%d new titles)", strings.Join(names, ", "), n)
 }
 
 // idleLibraries returns the libraries under the path, or none if Jellyfin is scanning any of them or all.

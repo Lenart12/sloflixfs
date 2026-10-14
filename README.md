@@ -154,6 +154,7 @@ Every option is a flag or an environment variable. The variable name is `SLOFLIX
 | `-jellyfin-key` | `SLOFLIX_JELLYFIN_KEY` | | Jellyfin API key. |
 | `-jellyfin-path` | `SLOFLIX_JELLYFIN_PATH` | `/media/sloflix/library` | The mount's path as Jellyfin sees it. Libraries under it are scanned. |
 | `-allow-other` | `SLOFLIX_ALLOW_OTHER` | `false` | Let other users access the mount. |
+| `-log-level` | `SLOFLIX_LOG_LEVEL` | `info` | Least severe messages logged: `debug`, `info`, `warn` or `error`. `debug` adds every request and each title's check result. |
 | `-limit-movies`, `-limit-shows` | `SLOFLIX_LIMIT_MOVIES`, `SLOFLIX_LIMIT_SHOWS` | `0` (all) | List and crawl only the newest N titles, for testing. |
 
 In Docker, set options as environment variables. The image sets the mount, the cache and `-allow-other` itself.
@@ -246,13 +247,13 @@ FUSE has no change notifications, so Jellyfin can't see new titles until its nex
 
 ## Troubleshooting
 
-**Reading the logs.** Run `docker compose logs -f sloflix`, or `docker logs -f sloflix` for a standalone container. Every API call, DoodStream lookup and size check is one log line, and each closed file logs a summary of its connections.
+**Reading the logs.** Run `docker compose logs -f sloflix`, or `docker logs -f sloflix` for a standalone container. By default the log shows titles added, changed and removed, each opened and closed file with a summary of its connections, crawl summaries and problems. With `SLOFLIX_LOG_LEVEL=debug`, every API call, DoodStream lookup and size check is also one log line, and each checked title that isn't playable logs why.
 
-**A title is missing.** It may not be checked yet, since new titles are checked newest first and a fresh cache takes a few days to fill. If it was checked, the log has a `crawl <id>:` line with the reason:
+**A title is missing.** It may not be checked yet, since new titles are checked newest first and a fresh cache takes a few days to fill. If it was checked, the debug log has a `crawl <id>:` line with the reason:
 - `no direct source`: no supported source;
 - an unreachable video server: retried with backoff (see [Safeguards](#safeguards)).
 
-**`asks for a captcha` in the log.** The DoodStream lookup limit was exceeded, possibly by another machine on the same network. The lookup is retried later; nothing needs to be done.
+**`asks for a captcha` in the debug log.** The DoodStream lookup limit was exceeded, possibly by another machine on the same network. The lookup is retried later; nothing needs to be done.
 
 **`Transport endpoint is not connected` on the mount.** A previous run crashed and left the mount behind. In Docker, restarting the container clears it. Without Docker, run `fusermount3 -u <mountpoint>` and start sloflixfs again.
 
@@ -280,6 +281,7 @@ docker buildx build --platform linux/amd64,linux/arm64 \
 | `internal/jellyfin` | Library scan triggers |
 | `internal/mp4` | Reading the MP4 index for probe headers, spotting broken files |
 | `internal/web` | Shared HTTP request helpers |
+| `internal/logx` | Leveled printf-style logging, filtered by `-log-level` |
 
 ## License
 

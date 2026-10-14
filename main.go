@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 
 	"github.com/Lenart12/sloflixfs/internal/fusefs"
+	"github.com/Lenart12/sloflixfs/internal/logx"
 	"github.com/Lenart12/sloflixfs/internal/sloflix"
 )
 
@@ -32,7 +34,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	log.Printf("mounted on %s", mount)
+	logx.Infof("mounted on %s", mount)
 	logSettings(cfg)
 	go sloflix.Crawl()
 	go unmountOnSignal(server, mount)
@@ -56,10 +58,13 @@ func parseFlags() (cfg sloflix.Config, mount string, allowOther bool) {
 	flag.StringVar(&cfg.JellyfinURL, "jellyfin-url", "", "Jellyfin's address (e.g. http://jellyfin:8096), to scan its sloflix libraries when new titles are ready (empty = off)")
 	flag.StringVar(&cfg.JellyfinKey, "jellyfin-key", "", "Jellyfin API key (Dashboard > API Keys)")
 	flag.StringVar(&cfg.JellyfinPath, "jellyfin-path", "/media/sloflix/library", "the mount's path as Jellyfin sees it; libraries under it are scanned")
+	var level slog.Level
+	flag.TextVar(&level, "log-level", slog.LevelInfo, "log messages at this level and above: debug, info, warn or error")
 	if err := envDefaults(flag.CommandLine, os.Getenv); err != nil {
 		log.Fatal(err)
 	}
 	flag.Parse()
+	slog.SetLogLoggerLevel(level)
 	if mount == "" || cfg.Username == "" || cfg.Password == "" {
 		log.Fatal("usage: sloflixfs -mount DIR, with credentials in SLOFLIX_USER and SLOFLIX_PASS (or -user, -pass); -h lists all options")
 	}
@@ -100,12 +105,12 @@ func mountFS(mount string, allowOther bool) (*fuse.Server, error) {
 func unmountOnSignal(server *fuse.Server, mount string) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	log.Printf("stopping on %v", <-sig)
+	logx.Infof("stopping on %v", <-sig)
 	// A lazy unmount also reaches busy copies of the mount, such as Jellyfin's in Docker, so stopping with
 	// files open leaves no dead mount. It needs root; otherwise fall back to fusermount.
 	if err := syscall.Unmount(mount, syscall.MNT_DETACH); err != nil {
 		if err := server.Unmount(); err != nil {
-			log.Printf("unmount: %v", err)
+			logx.Errorf("unmount: %v", err)
 		}
 		return
 	}
@@ -123,7 +128,7 @@ func logSettings(cfg sloflix.Config) {
 	if cfg.LimitMovies > 0 || cfg.LimitShows > 0 {
 		limits = fmt.Sprintf(", limited to %d movies and %d shows", cfg.LimitMovies, cfg.LimitShows)
 	}
-	log.Printf("settings: cache %s, refresh %v, revalidate %v, probe cache %d, rate %g/s, concurrency %d, jellyfin scans %s%s",
+	logx.Infof("settings: cache %s, refresh %v, revalidate %v, probe cache %d, rate %g/s, concurrency %d, jellyfin scans %s%s",
 		cfg.CacheDir, cfg.Refresh, cfg.Revalidate, cfg.ProbeCache, cfg.Rate, cfg.Concurrency, jf, limits)
 }
 

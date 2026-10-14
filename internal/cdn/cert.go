@@ -4,10 +4,11 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
-	"log"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Lenart12/sloflixfs/internal/logx"
 )
 
 // expiredOK is the only domain whose expired certificates are accepted: some DoodStream video servers
@@ -43,7 +44,7 @@ func verifyCert(cs tls.ConnectionState, roots *x509.CertPool) error {
 		return err
 	}
 	if _, seen := expiredSeen.LoadOrStore(cs.ServerName, struct{}{}); !seen {
-		log.Printf("cdn: accepting expired certificate of %s (expired %s)", cs.ServerName, leaf.NotAfter.Format(time.DateOnly))
+		logx.Infof("cdn: accepting expired certificate of %s (expired %s)", cs.ServerName, leaf.NotAfter.Format(time.DateOnly))
 	}
 	return nil
 }

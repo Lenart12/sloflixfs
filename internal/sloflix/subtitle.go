@@ -6,12 +6,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 
+	"github.com/Lenart12/sloflixfs/internal/logx"
 	"github.com/Lenart12/sloflixfs/internal/web"
 )
 
@@ -44,7 +44,7 @@ func Subtitle(loc string) ([]byte, error) {
 func fetchSubtitle(loc string) (bool, error) {
 	defer acquire(background)()
 	wait(background)
-	log.Printf("sub: GET %q", loc)
+	logx.Debugf("sub: GET %q", loc)
 	req, err := web.NewRequest(context.Background(), "GET", subBase+url.PathEscape(loc), nil)
 	if err != nil {
 		return false, err

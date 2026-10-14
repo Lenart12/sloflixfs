@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"sync"
@@ -15,6 +14,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fuse"
 
 	"github.com/Lenart12/sloflixfs/internal/cdn"
+	"github.com/Lenart12/sloflixfs/internal/logx"
 	"github.com/Lenart12/sloflixfs/internal/sloflix"
 )
 
@@ -81,7 +81,7 @@ func (s *stream) open(off int64) error {
 			return nil
 		}
 		resp.Body.Close()
-		log.Printf("stream %d: %s, re-resolving", s.id, resp.Status)
+		logx.Infof("stream %d: %s, re-resolving", s.id, resp.Status)
 	}
 	return errors.New("stream unavailable")
 }
@@ -99,14 +99,14 @@ func (s *stream) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadRes
 		}
 		if s.body == nil || off < s.pos || off-s.pos > skipMax {
 			if err := s.open(off); err != nil {
-				log.Printf("stream %d: %v", s.id, err)
+				logx.Warnf("stream %d: %v", s.id, err)
 				return nil, syscall.EIO
 			}
 			if off >= s.size { // the first response may have shown a smaller file
 				return fuse.ReadResultData(nil), 0
 			}
 		} else if err := s.skipTo(off); err != nil {
-			log.Printf("stream %d: skip to %d: %v", s.id, off, err)
+			logx.Warnf("stream %d: skip to %d: %v", s.id, off, err)
 			s.close()
 			continue
 		}
@@ -119,7 +119,7 @@ func (s *stream) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadRes
 			s.served = true
 			return fuse.ReadResultData(dest), 0
 		}
-		log.Printf("stream %d: read at %d: %v", s.id, off, err)
+		logx.Warnf("stream %d: read at %d: %v", s.id, off, err)
 		s.close()
 	}
 	return nil, syscall.EIO
@@ -169,7 +169,7 @@ func (s *stream) Release(ctx context.Context) syscall.Errno {
 	}
 	sloflix.Probed(s.id)
 	if s.conns > 0 || s.cached > 0 {
-		log.Printf("close %d: %d connections, %.1f MB in %v, %.1f MB from probe cache", s.id, s.conns, float64(s.read)/1e6, time.Since(s.opened).Round(100*time.Millisecond), float64(s.cached)/1e6)
+		logx.Infof("close %d: %d connections, %.1f MB in %v, %.1f MB from probe cache", s.id, s.conns, float64(s.read)/1e6, time.Since(s.opened).Round(100*time.Millisecond), float64(s.cached)/1e6)
 	}
 	return 0
 }
