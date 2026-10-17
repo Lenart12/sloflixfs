@@ -50,7 +50,8 @@ func saveFailed() {
 
 // due reports whether the crawler should check id now, and its bucket: 0 for a new title, 1 for one
 // without a source or in goneGrace (rechecked after refreshTTL), 2 for a playable one (after metaTTL).
-// written is when its meta was last written.
+// written is when it was last checked: its meta's mtime, which playback opens that skip the probe leave
+// alone.
 func due(id int) (bucket int, written time.Time, ok bool) {
 	lookupMu.Lock()
 	recent := time.Now().Before(crawlFailed[id].Next)

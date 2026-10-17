@@ -117,7 +117,7 @@ func resolve(id int, p priority) (string, Meta, error) {
 	if sub != nil {
 		m.Sub = *sub
 	}
-	prev, _, hasPrev := readMeta(id)
+	prev, checked, hasPrev := readMeta(id)
 	// missing means the video is gone, which is recorded. Other errors are transient.
 	var missing error
 	if stream == "" && code != "" {
@@ -137,7 +137,8 @@ func resolve(id int, p priority) (string, Meta, error) {
 			m.DeadCode = code
 		}
 	}
-	if stream != "" && p == playback && prev.Size > 0 {
+	unprobed := stream != "" && p == playback && prev.Size > 0
+	if unprobed {
 		// Playback skips the probe: the stream checks the size on every response. Nothing was verified, so
 		// a title in goneGrace stays in it.
 		m.Size, m.Gone = prev.Size, prev.Gone
@@ -160,6 +161,11 @@ func resolve(id int, p priority) (string, Meta, error) {
 	m.URL, m.URLAt = stream, time.Now()
 	if err := recordPlayable(id, p, prev.Size == 0, m); err != nil {
 		return "", m, err
+	}
+	if unprobed {
+		// Keep the meta's mtime, the last check: Jellyfin reopens a file it can't read on every scan, which
+		// would otherwise keep a broken title from its recheck forever.
+		os.Chtimes(metaFile(id), checked, checked)
 	}
 	return stream, m, nil
 }

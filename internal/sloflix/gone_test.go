@@ -122,10 +122,16 @@ func TestPlaybackKeepsGone(t *testing.T) {
 	}()
 	gone := time.Now().Add(-time.Hour).Round(time.Second)
 	writeMeta(1, Meta{Size: 100 << 20, Gone: gone})
+	checked := time.Now().Add(-metaTTL).Round(time.Second)
+	os.Chtimes(metaFile(1), checked, checked)
 	if _, _, err := resolve(1, playback); err != nil {
 		t.Fatal(err)
 	}
 	if m, _, _ := readMeta(1); !m.Gone.Equal(gone) {
 		t.Fatalf("gone after playback = %v, want %v", m.Gone, gone)
+	}
+	// Nor does it count as a check: a title Jellyfin keeps reopening still gets its recheck.
+	if _, written, _ := readMeta(1); !written.Equal(checked) {
+		t.Fatalf("last checked after playback = %v, want %v", written, checked)
 	}
 }
